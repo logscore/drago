@@ -66,3 +66,7 @@ export const dnsRecord = mysqlTable(
 		recordNameIdx: index('idx_dns_record_record_name').on(t.recordName)
 	})
 );
+
+// ---------------------------
+// DNS Zones
+// ---------------------------

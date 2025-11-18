@@ -1,0 +1,27 @@
+services:
+  # Database Service
+  db:
+    image: mysql:8.4
+    container_name: drago-db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_TCP_PORT: ${MYSQL_PORT}
+    ports:
+      - "6789:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - drago-network
+
+volumes:
+  mysql-data:
+    name: drago-db-data
+
+networks:
+  drago-network:
+    driver: bridge
