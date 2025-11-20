@@ -6,7 +6,7 @@ Drago is named after the Lightning L-Drago 100HF from Beyblade Metal Masters, a 
 
 ## Drago is made of 4 parts:
 
-1. The front end: this is where users make their account, add their DNS provider acces keys, add records they want to have managed by Drago, and make API keys for the Drago Client
+1. The front end: this is where users make their account, add their DNS provider access keys, add records they want to have managed by Drago, and make API keys for the Drago Client
 2. Drago Client: This is a light weight client built in rust that checks your IP and sends that data to the Drago API for processing
 3. Drago API: Manages syncing and propagating of client IPs to DNS records for the desired machine, to limit the requests sent to the DNS provider, we manage the Drago DB
 4. Drago DB: Built on planetscale, the Drago DB holds user data, DNS provider access tokens, DNS Zones, DNS Records and Drago Client API keys. The data is much more ephemeral as we sync the IP values every 5 minutes.

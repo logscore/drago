@@ -1,21 +1,33 @@
 use crate::db::schema;
 use diesel::prelude::*;
 
-#[derive(Debug, Queryable, Selectable)]
+#[derive(Debug, Queryable, Selectable, Insertable)]
 #[diesel(table_name = schema::dns_token)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct DnsAccessToken {
     id: String,
     user_id: String,
-    token_encrypted: String,
-    account_email: Option<String>,
+    nonce: Vec<u8>,
+    token_encrypted: Vec<u8>,
+    tag: Vec<u8>,
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Debug, Queryable, Selectable)]
+#[derive(Debug, Insertable)]
 #[diesel(table_name = schema::dns_token)]
+pub struct NewDnsAccessToken<'a> {
+    pub id: &'a str,
+    pub user_id: &'a str,
+    pub nonce: &'a Vec<u8>,
+    pub token_encrypted: &'a Vec<u8>,
+    pub tag: &'a Vec<u8>,
+}
+
+#[derive(Debug, Queryable, Selectable)]
+#[diesel(table_name = schema::dns_zone)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct ZoneRecord {
-    
+    id: String,
+    zone_name: String,
 }
