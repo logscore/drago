@@ -22,15 +22,15 @@ diesel::table! {
 
 diesel::table! {
     api_keys (id) {
-        #[max_length = 36]
+        #[max_length = 255]
         id -> Varchar,
         #[max_length = 36]
         user_id -> Varchar,
         #[max_length = 64]
         key_hash -> Varchar,
         last_used -> Nullable<Timestamp>,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
+        created_on -> Timestamp,
+        updated_on -> Timestamp,
     }
 }
 
@@ -44,9 +44,12 @@ diesel::table! {
         record_name -> Varchar,
         #[max_length = 255]
         zone_id -> Varchar,
-        content -> Nullable<Text>,
-        created_at -> Timestamp,
-        last_synced_at -> Timestamp,
+        content -> Text,
+        ttl -> Integer,
+        proxied -> Bool,
+        #[max_length = 16]
+        record_type -> Varchar,
+        last_synced_on -> Timestamp,
     }
 }
 
@@ -62,8 +65,8 @@ diesel::table! {
         token_encrypted -> Varbinary,
         #[max_length = 16]
         tag -> Varbinary,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
+        created_on -> Timestamp,
+        updated_on -> Timestamp,
     }
 }
 
@@ -77,7 +80,7 @@ diesel::table! {
         token_id -> Varchar,
         #[max_length = 255]
         zone_name -> Varchar,
-        last_synced_at -> Timestamp,
+        last_synced_on -> Timestamp,
         meta -> Nullable<Text>,
     }
 }
@@ -125,6 +128,7 @@ diesel::table! {
 }
 
 diesel::joinable!(account -> user (user_id));
+diesel::joinable!(api_keys -> dns_record (id));
 diesel::joinable!(api_keys -> user (user_id));
 diesel::joinable!(dns_record -> dns_zone (zone_id));
 diesel::joinable!(dns_record -> user (user_id));

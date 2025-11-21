@@ -8,6 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post},
 };
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use reqwest::Client;
@@ -31,9 +32,10 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/records", get(list_dns_records))
-        .route("/access_key", post(add_dns_access_token))
-        .route("/access_key", delete(delete_access_token))
-        .route("/access_keys", get(get_dns_access_tokens))
+        .route("/record", post(add_dns_record))
+        .route("/access_token", post(add_dns_access_token))
+        .route("/access_token", delete(delete_access_token))
+        .route("/access_tokens", get(get_dns_access_tokens))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -43,6 +45,8 @@ async fn main() {
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json("Drago is running".to_string()))
 }
+
+async fn add_dns_record(Json(body): Json<AddDnsRecord>) {}
 
 async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse {
     let curr_user_id = params.user_id;
@@ -135,18 +139,31 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
         for (z_id, z_name) in raw_zones {
             let raw_records = dns_record::table
                 .filter(dns_record::zone_id.eq(&z_id))
-                .select((dns_record::id, dns_record::record_name, dns_record::content))
-                .load::<(String, String, Option<String>)>(&mut conn)
+                .select((
+                    dns_record::id,
+                    dns_record::record_name,
+                    dns_record::content,
+                    dns_record::ttl,
+                    dns_record::record_type,
+                    dns_record::proxied,
+                ))
+                // Figure out how to make this tuple just a model struct in models.rs
+                .load::<(String, String, String, i32, String, bool)>(&mut conn)
                 .unwrap_or_default();
 
             // Map to DnsRecord struct
             let records_structs: Vec<DnsRecord> = raw_records
                 .into_iter()
-                .map(|(r_id, r_name, r_content)| DnsRecord {
-                    id: r_id,
-                    name: r_name,
-                    content: r_content.unwrap_or_default(),
-                })
+                .map(
+                    |(r_id, r_name, r_content, r_ttl, r_type, r_proxied)| DnsRecord {
+                        id: r_id,
+                        name: r_name,
+                        content: r_content,
+                        ttl: r_ttl,
+                        record_type: r_type,
+                        proxied: r_proxied,
+                    },
+                )
                 .collect();
 
             // Map to Zone Struct
@@ -172,8 +189,8 @@ async fn get_dns_access_tokens(Query(params): Query<GetAccessTokens>) -> impl In
 
     let tokens = match dns_token::table
         .filter(dns_token::user_id.eq(&user_id))
-        .select((dns_token::id, dns_token::created_at))
-        .load::<(String, chrono::NaiveDateTime)>(&mut conn)
+        .select((dns_token::id, dns_token::created_on))
+        .load::<(String, NaiveDateTime)>(&mut conn)
     {
         Ok(tokens) => tokens,
         Err(e) => {
@@ -279,7 +296,7 @@ async fn initialize_zones(
                     dns_zone::user_id.eq(curr_user_id),
                     dns_zone::zone_name.eq(&zone.name),
                     dns_zone::token_id.eq(&dns_access_token_id),
-                    dns_zone::last_synced_at.eq(chrono::Utc::now().naive_utc()),
+                    dns_zone::last_synced_on.eq(chrono::Utc::now().naive_utc()),
                 ))
                 .execute(conn)?;
 
@@ -291,8 +308,9 @@ async fn initialize_zones(
                         dns_record::record_name.eq(&record.name),
                         dns_record::zone_id.eq(&zone.id),
                         dns_record::content.eq(&record.content),
-                        dns_record::created_at.eq(chrono::Utc::now().naive_utc()),
-                        dns_record::last_synced_at.eq(chrono::Utc::now().naive_utc()),
+                        dns_record::ttl.eq(&record.ttl),
+                        dns_record::record_type.eq(&record.record_type),
+                        dns_record::proxied.eq(&record.proxied),
                     ))
                     .execute(conn)?;
             }
@@ -345,6 +363,15 @@ async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, V
 
 // Types
 #[derive(Debug, Deserialize, Serialize)]
+struct AddDnsRecord {
+    user_id: String,
+    name: String,
+    content: String,
+    ttl: i32,
+    proxied: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct GetRecords {
     user_id: String,
 }
@@ -367,9 +394,13 @@ struct DeleteAccessToken {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct DnsRecord {
-    id: String,
-    name: String,
-    content: String,
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub record_type: String,
+    pub content: String,
+    pub ttl: i32,
+    pub proxied: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

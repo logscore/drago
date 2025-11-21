@@ -10,8 +10,8 @@ pub struct DnsAccessToken {
     nonce: Vec<u8>,
     token_encrypted: Vec<u8>,
     tag: Vec<u8>,
-    created_at: chrono::NaiveDateTime,
-    updated_at: chrono::NaiveDateTime,
+    created_on: chrono::NaiveDateTime,
+    updated_on: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Insertable)]
@@ -22,4 +22,15 @@ pub struct NewDnsAccessToken<'a> {
     pub nonce: &'a Vec<u8>,
     pub token_encrypted: &'a Vec<u8>,
     pub tag: &'a Vec<u8>,
+}
+
+#[derive(Debug, Queryable)]
+#[diesel(table_name = schema::dns_zone)]
+pub struct DnsZoneRecords {
+    id: String,
+    record_name: String,
+    content: String,
+    ttl: i32,
+    record_type: String,
+    proxied: bool,
 }

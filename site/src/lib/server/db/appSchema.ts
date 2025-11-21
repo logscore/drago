@@ -5,7 +5,8 @@ import {
 	timestamp,
 	int,
 	index,
-	varbinary
+	varbinary,
+	boolean
 } from 'drizzle-orm/mysql-core';
 import { user } from './authSchema'; // assuming auth schema file exports user
 
@@ -20,8 +21,8 @@ export const dnsToken = mysqlTable('dns_token', {
 	nonce: varbinary('nonce', { length: 12 }).notNull(), // 12-byte AES-GCM IV
 	tokenEncrypted: varbinary('token_encrypted', { length: 1024 }).notNull(), // ciphertext
 	tag: varbinary('tag', { length: 16 }).notNull(),
-	createdAt: timestamp('created_at', { fsp: 3 }).defaultNow().notNull(),
-	updatedAt: timestamp('updated_at', { fsp: 3 })
+	createdOn: timestamp('created_on').defaultNow().notNull(),
+	updatedOn: timestamp('updated_on')
 		.defaultNow()
 		.$onUpdate(() => new Date())
 		.notNull()
@@ -38,9 +39,11 @@ export const apiKeys = mysqlTable(
 			.notNull()
 			.references(() => user.id, { onDelete: 'cascade' }),
 		keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
-		lastUsed: timestamp('last_used', { fsp: 3 }),
-		createdAt: timestamp('created_at', { fsp: 3 }).defaultNow().notNull(),
-		updatedAt: timestamp('updated_at', { fsp: 3 })
+		// Each API key can control a single DNS record. This is how we identify which record to update when a client syncs to us.
+		dns_record_id: varchar('id', { length: 255 }).references(() => dnsRecord.id),
+		lastUsed: timestamp('last_used'),
+		createdOn: timestamp('created_on').defaultNow().notNull(),
+		updatedOn: timestamp('updated_on')
 			.defaultNow()
 			.$onUpdate(() => new Date())
 			.notNull()
@@ -56,24 +59,28 @@ export const apiKeys = mysqlTable(
 export const dnsRecord = mysqlTable(
 	'dns_record',
 	{
-		id: varchar('id', { length: 255 }).primaryKey(), // DNS providers internal ID
+		// This value
+		id: varchar('id', { length: 255 }).primaryKey(), // DNS provider's internal ID
 		userId: varchar('user_id', { length: 36 })
 			.notNull()
 			.references(() => user.id, { onDelete: 'cascade' }),
-		recordName: varchar('record_name', { length: 255 }).notNull(),
 		zoneId: varchar('zone_id', { length: 255 })
 			.notNull()
-			.references(() => dnsZone.id, { onDelete: 'cascade' }), // DNS providers internal ID
-		content: text('content'), // This is the IP, Domain name, or whatever else.
-		createdAt: timestamp('created_at', { fsp: 3 }).defaultNow().notNull(),
-		lastSyncedAt: timestamp('last_synced_at')
+			.references(() => dnsZone.id, { onDelete: 'cascade' }),
+		recordName: varchar('record_name', { length: 255 }).notNull(),
+		recordType: varchar('record_type', { length: 16 }).notNull(), // e.g. A, AAAA, CNAME, TXT
+		content: text('content').notNull(), // IP, domain target, TXT value, etc.
+		ttl: int('ttl').default(3600).notNull(),
+		proxied: boolean('proxied').default(false).notNull(),
+		lastSyncedOn: timestamp('last_synced_on')
 			.defaultNow()
 			.$onUpdate(() => new Date())
 			.notNull()
 	},
 	(t) => ({
 		userIdx: index('idx_dns_record_user_id').on(t.userId),
-		recordNameIdx: index('idx_dns_record_record_name').on(t.recordName)
+		recordNameIdx: index('idx_dns_record_record_name').on(t.recordName),
+		typeIdx: index('idx_dns_record_type').on(t.recordType)
 	})
 );
 
@@ -91,7 +98,7 @@ export const dnsZone = mysqlTable(
 			.notNull()
 			.references(() => dnsToken.id, { onDelete: 'cascade' }),
 		zoneName: varchar('zone_name', { length: 255 }).notNull(),
-		lastSyncedAt: timestamp('last_synced_at')
+		lastSyncedOn: timestamp('last_synced_on')
 			.defaultNow()
 			.$onUpdate(() => new Date())
 			.notNull(),
