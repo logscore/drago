@@ -6,7 +6,7 @@ use axum::{
     extract::Query,
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
@@ -28,7 +28,9 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/records", get(list_dns_records))
-        .route("/dns_access_key", post(add_dns_access_token));
+        .route("/access_key", post(add_dns_access_token))
+        .route("/access_key", delete(delete_access_token))
+        .route("/access_keys", get(get_dns_access_tokens));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -58,12 +60,10 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
         }
     };
 
-    // ---------------------------------------------------------
-    // 4. Logic: If empty, use the decrypted token to init
-    // ---------------------------------------------------------
     let mut zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> = Vec::new();
 
     if zones.is_empty() {
+        // We dont have the DNS records and zones from the DNS provider
         // Fetch the dns access token
         let token_data = dns_token::table
             .filter(dns_token::user_id.eq(&curr_user_id))
@@ -160,6 +160,84 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
 
     // Not sure why this part is needed, but Rust yells at me if i dont have it. But we should never get to this point in the logic
     (StatusCode::OK, Json(&zone_dns_data)).into_response()
+}
+
+async fn get_dns_access_tokens(Query(params): Query<GetAccessTokens>) -> impl IntoResponse {
+    let user_id = params.user_id;
+    let mut conn = establish_connection();
+
+    let tokens = match dns_token::table
+        .filter(dns_token::user_id.eq(&user_id))
+        .select((dns_token::id, dns_token::created_at))
+        .load::<(String, chrono::NaiveDateTime)>(&mut conn)
+    {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            eprintln!("Failed to retrieve access tokens: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
+        }
+    };
+
+    (StatusCode::OK, Json(&tokens)).into_response()
+}
+
+async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResponse {
+    // TODO: Add in a dns token here.
+    let user_id = body.user_id;
+    let dns_token = body.token;
+    let id = Uuid::now_v7().to_string();
+    let mut conn = establish_connection();
+
+    // Encrypts the dns access token
+    let encrypted = match encrypt(&dns_token) {
+        Ok(enc) => enc,
+        Err(e) => {
+            eprintln!("Encryption failed: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
+        }
+    };
+
+    let new_token = NewDnsAccessToken {
+        id: &id,
+        user_id: &user_id,
+        nonce: &encrypted.nonce,
+        token_encrypted: &encrypted.ciphertext,
+        tag: &encrypted.tag,
+    };
+
+    let result = conn.transaction(|conn| {
+        diesel::insert_into(dns_token::table)
+            .values(&new_token)
+            .execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    });
+
+    match result {
+        Ok(_) => (StatusCode::OK, "Added DNS token to account").into_response(),
+        Err(err) => {
+            eprintln!("DB error: {:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
+        }
+    }
+}
+
+async fn delete_access_token(Json(body): Json<DeleteAccessToken>) -> impl IntoResponse {
+    let dns_token_id = body.token_id;
+
+    let conn = &mut establish_connection();
+
+    let result = conn.transaction(|conn| {
+        diesel::delete(dns_token::table.filter(dns_token::id.eq(dns_token_id))).execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    });
+
+    match result {
+        Ok(_) => (StatusCode::OK, "Deleted DNS token from account").into_response(),
+        Err(err) => {
+            eprintln!("DB error: {:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
+        }
+    }
 }
 
 async fn initialize_zones(
@@ -261,50 +339,14 @@ async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, V
     }
 }
 
-async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResponse {
-    // TODO: Add in a dns token here.
-    let user_id = body.user_id;
-    let dns_token = body.token;
-    let id = Uuid::now_v7().to_string();
-    let mut conn = establish_connection();
-
-    // Encrypts the dns access token
-    let encrypted = match encrypt(&dns_token) {
-        Ok(enc) => enc,
-        Err(e) => {
-            eprintln!("Encryption failed: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Encryption error").into_response();
-        }
-    };
-
-    let new_token = NewDnsAccessToken {
-        id: &id,
-        user_id: &user_id,
-        nonce: &encrypted.nonce,
-        token_encrypted: &encrypted.ciphertext,
-        tag: &encrypted.tag,
-    };
-
-    let result = conn.transaction(|conn| {
-        diesel::insert_into(dns_token::table)
-            .values(&new_token)
-            .execute(conn)?;
-        Ok::<_, diesel::result::Error>(())
-    });
-
-    match result {
-        Ok(_) => (StatusCode::OK, "Added DNS token to account").into_response(),
-        Err(err) => {
-            eprintln!("DB error: {:?}", err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
-        }
-    }
-}
-
-// --- Types ---
-
+// Types
 #[derive(Debug, Deserialize, Serialize)]
 struct GetRecords {
+    user_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GetAccessTokens {
     user_id: String,
 }
 
@@ -312,6 +354,11 @@ struct GetRecords {
 struct AddAccessToken {
     user_id: String,
     token: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DeleteAccessToken {
+    token_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
