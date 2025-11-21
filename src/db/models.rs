@@ -23,11 +23,3 @@ pub struct NewDnsAccessToken<'a> {
     pub token_encrypted: &'a Vec<u8>,
     pub tag: &'a Vec<u8>,
 }
-
-#[derive(Debug, Queryable, Selectable)]
-#[diesel(table_name = schema::dns_zone)]
-#[diesel(check_for_backend(diesel::mysql::Mysql))]
-pub struct ZoneRecord {
-    id: String,
-    zone_name: String,
-}

@@ -8,9 +8,9 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use diesel::prelude::*;
 use diesel::result::Error as DieselError;
-use diesel::{prelude::*, sql_types::Binary};
-use reqwest::{Client, dns};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -44,45 +44,13 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
     let mut conn = establish_connection();
     use crate::db::schema::dns_token;
 
-    // ---------------------------------------------------------
-    // 1. Fetch the Token INDEPENDENTLY of zones
-    // ---------------------------------------------------------
-    let token_data = dns_token::table
-        .filter(dns_token::user_id.eq(&curr_user_id))
-        .select((dns_token::token_encrypted, dns_token::nonce, dns_token::tag))
-        .first::<(Vec<u8>, Vec<u8>, Vec<u8>)>(&mut conn)
-        .optional();
-
-    // Handle DB error or Missing Token
-    let (ciphertext, nonce, tag) = match token_data {
-        Ok(Some(data)) => data,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No DNS Token found for user").into_response(),
-        Err(e) => {
-            eprintln!("Token Query failed: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
-        }
-    };
-
-    // ---------------------------------------------------------
-    // 2. Decrypt the token immediately
-    // ---------------------------------------------------------
-    let decrypted_token = match decrypt(&nonce, &ciphertext, &tag) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Decryption failed: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Security Error").into_response();
-        }
-    };
-
-    // ---------------------------------------------------------
-    // 3. Now fetch the zones
-    // ---------------------------------------------------------
+    // Fetch the zones with their dns records from DNS provider
     let zones_result: Result<Vec<(String, String)>, DieselError> = dns_zone::table
         .filter(dns_zone::user_id.eq(&curr_user_id))
         .select((dns_zone::id, dns_zone::zone_name))
         .load::<(String, String)>(&mut conn);
 
-    let mut zones = match zones_result {
+    let zones = match zones_result {
         Ok(rows) => rows,
         Err(e) => {
             eprintln!("Zone Query failed: {:?}", e);
@@ -93,51 +61,112 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
     // ---------------------------------------------------------
     // 4. Logic: If empty, use the decrypted token to init
     // ---------------------------------------------------------
+    let mut zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> = Vec::new();
+
     if zones.is_empty() {
-        if let Err(e) = initialize_zones(&mut conn, &curr_user_id, &decrypted_token).await {
-            eprintln!("\nZone initialization failed: {:?}", e);
-            return (StatusCode::NOT_FOUND, "Account has no domain names.").into_response();
-        }
-        // This is the actual query to see if the user has any domains after initializing the data in the users account. I could alternatively just have the initialize_zones() function return the zones data
-        let new_zones = dns_zone::table
-            .filter(dns_zone::user_id.eq(&curr_user_id))
-            .select((dns_zone::id, dns_zone::zone_name))
-            .load::<(String, String)>(&mut conn);
+        // Fetch the dns access token
+        let token_data = dns_token::table
+            .filter(dns_token::user_id.eq(&curr_user_id))
+            .select((
+                dns_token::id,
+                dns_token::token_encrypted,
+                dns_token::nonce,
+                dns_token::tag,
+            ))
+            .first::<(String, Vec<u8>, Vec<u8>, Vec<u8>)>(&mut conn)
+            .optional();
 
-        match new_zones {
-            Ok(z) => zones = z,
+        // Handle DB error or Missing Token
+        let (token_id, ciphertext, nonce, tag) = match token_data {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, "No DNS Token found for user").into_response();
+            }
             Err(e) => {
-                eprintln!("Re-query failed: {:?}", e);
+                eprintln!("Token Query failed: {:?}", e);
                 return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
             }
-        }
+        };
 
-        if zones.is_empty() {
-            return (StatusCode::OK, "No domains found on DNS provider.").into_response();
-        }
+        // Decrypt the token
+        let decrypted_token = match decrypt(&nonce, &ciphertext, &tag) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Decryption failed: {:?}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Security Error").into_response();
+            }
+        };
+
+        zone_dns_data =
+            match initialize_zones(&mut conn, &curr_user_id, &decrypted_token, &token_id).await {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("Error fetching DNS records: {:?}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Error fetching DNS Zones",
+                    )
+                        .into_response();
+                }
+            };
+
+        // Return the zone dns data
+        (StatusCode::OK, Json(&zone_dns_data)).into_response()
     } else {
-        // TODO: Query the DB for the records and return the zone name, zone id, and dns records that cooresponds with each, in an API response
-        let new_zones = dns_zone::table
+        // We have records in the db, we use those
+        // Query the DB for the users dns zones
+        let raw_zones = match dns_zone::table
             .filter(dns_zone::user_id.eq(&curr_user_id))
             .select((dns_zone::id, dns_zone::zone_name))
-            .load::<(String, String)>(&mut conn);
-
-        match new_zones {
-            Ok(z) => zones = z,
+            .load::<(String, String)>(&mut conn)
+        {
+            Ok(z) => z,
             Err(e) => {
-                eprintln!("Re-query failed: {:?}", e);
+                eprintln!("Zone fetch error: {:?}", e);
                 return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
             }
-        }
-    }
+        };
 
-    (StatusCode::OK, format!("\nZones: {:?}", zones)).into_response()
+        // Loop through zones and fetch their records
+        for (z_id, z_name) in raw_zones {
+            let raw_records = dns_record::table
+                .filter(dns_record::zone_id.eq(&z_id))
+                .select((dns_record::id, dns_record::record_name, dns_record::content))
+                .load::<(String, String, Option<String>)>(&mut conn)
+                .unwrap_or_default();
+
+            // Map to DnsRecord struct
+            let records_structs: Vec<DnsRecord> = raw_records
+                .into_iter()
+                .map(|(r_id, r_name, r_content)| DnsRecord {
+                    id: r_id,
+                    name: r_name,
+                    content: r_content.unwrap_or_default(),
+                })
+                .collect();
+
+            // Map to Zone Struct
+            let zone_struct = Zone {
+                id: z_id,
+                name: z_name,
+                status: "active".to_string(),
+            };
+
+            zone_dns_data.push((zone_struct, records_structs));
+        }
+
+        (StatusCode::OK, Json(&zone_dns_data)).into_response()
+    };
+
+    // Not sure why this part is needed, but Rust yells at me if i dont have it. But we should never get to this point in the logic
+    (StatusCode::OK, Json(&zone_dns_data)).into_response()
 }
 
 async fn initialize_zones(
     conn: &mut MysqlConnection,
     curr_user_id: &String,
     dns_access_token: &String,
+    dns_access_token_id: &String,
 ) -> Result<Vec<(Zone, Vec<DnsRecord>)>, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
 
@@ -167,13 +196,12 @@ async fn initialize_zones(
                     dns_zone::id.eq(&zone.id),
                     dns_zone::user_id.eq(curr_user_id),
                     dns_zone::zone_name.eq(&zone.name),
-                    dns_zone::token_id.eq("1"),
+                    dns_zone::token_id.eq(&dns_access_token_id),
                     dns_zone::last_synced_at.eq(chrono::Utc::now().naive_utc()),
                 ))
                 .execute(conn)?;
 
             for record in records {
-                println!("{:?}", &record.content);
                 diesel::insert_into(dns_record::table)
                     .values((
                         dns_record::id.eq(&record.id),
@@ -196,8 +224,6 @@ async fn initialize_zones(
 }
 
 async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, Vec<DnsRecord>)> {
-    println!("Fetching DNS records for zone: {}", zone.name);
-
     let url = format!(
         "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
         zone.id
@@ -242,7 +268,7 @@ async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResp
     let id = Uuid::now_v7().to_string();
     let mut conn = establish_connection();
 
-    // Encrypt the token here.
+    // Encrypts the dns access token
     let encrypted = match encrypt(&dns_token) {
         Ok(enc) => enc,
         Err(e) => {
@@ -299,7 +325,7 @@ struct DnsRecordsResponse {
     result: Vec<DnsRecord>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct DnsRecord {
     id: String,
     name: String,
