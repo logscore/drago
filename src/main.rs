@@ -12,6 +12,7 @@ use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::db::{models::NewDnsAccessToken, *};
@@ -25,12 +26,15 @@ const TOKEN: &str = "hZ2ar7s3edEQWIDmoxpzwvH5HIVL-m5pn3ouQScJ";
 
 #[tokio::main]
 async fn main() {
+    let cors = CorsLayer::new().allow_origin(Any);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/records", get(list_dns_records))
         .route("/access_key", post(add_dns_access_token))
         .route("/access_key", delete(delete_access_token))
-        .route("/access_keys", get(get_dns_access_tokens));
+        .route("/access_keys", get(get_dns_access_tokens))
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -362,17 +366,6 @@ struct DeleteAccessToken {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct DnsZonesResponse {
-    result: Vec<Zone>,
-    success: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct DnsRecordsResponse {
-    result: Vec<DnsRecord>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 struct DnsRecord {
     id: String,
     name: String,
@@ -384,6 +377,18 @@ struct Zone {
     id: String,
     name: String,
     status: String,
+}
+
+// From Cloudflare
+#[derive(Debug, Deserialize, Serialize)]
+struct DnsZonesResponse {
+    result: Vec<Zone>,
+    success: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct DnsRecordsResponse {
+    result: Vec<DnsRecord>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
