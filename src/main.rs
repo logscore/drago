@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post},
 };
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use reqwest::Client;
@@ -46,7 +46,140 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json("Drago is running".to_string()))
 }
 
-async fn add_dns_record(Json(body): Json<AddDnsRecord>) {}
+async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
+    let user_id = body.user_id;
+    let zone_id = body.zone_id;
+    dbg!(&zone_id);
+    let record_type = body.record_type;
+    let name = body.name;
+    let content = body.content;
+    let ttl = body.ttl;
+    let proxied = body.proxied;
+
+    let mut conn = establish_connection();
+
+    // Check if there is a record in the db with the same name and zone id
+    let existing_record_id = dns_record::table
+        .inner_join(dns_zone::table)
+        .select(dns_record::id)
+        .filter(dns_zone::user_id.eq(&user_id))
+        .filter(dns_zone::zone_name.eq(&name))
+        .first::<String>(&mut conn)
+        .optional();
+
+    let existing_record_id = match existing_record_id {
+        Ok(v) => v,
+        Err(err) => {
+            eprintln!("DB error: {err}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
+        }
+    };
+
+    if let Some(id) = existing_record_id {
+        println!("Found record {id}");
+        return (StatusCode::CONFLICT, Json("Record already exists")).into_response();
+    }
+
+    // Get the users dns access token from our db
+    let token_data = dns_token::table
+        .filter(dns_token::user_id.eq(&user_id))
+        .select((
+            dns_token::id,
+            dns_token::token_encrypted,
+            dns_token::nonce,
+            dns_token::tag,
+        ))
+        .first::<(String, Vec<u8>, Vec<u8>, Vec<u8>)>(&mut conn)
+        .optional();
+
+    // Handle DB error or Missing Token
+    let (_, ciphertext, nonce, tag) = match token_data {
+        Ok(Some(data)) => data,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json("No DNS Token found for user")).into_response();
+        }
+        Err(e) => {
+            eprintln!("Token Query failed: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+        }
+    };
+
+    // Decrypt the token
+    let decrypted_token = match decrypt(&nonce, &ciphertext, &tag) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Decryption failed: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+        }
+    };
+
+    // POST to cloudflare with the new dns record
+    let client = reqwest::Client::new();
+
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
+        zone_id
+    );
+
+    let payload = DnsRecordPayload {
+        r#type: &record_type,
+        name: &name,
+        content: &content,
+        ttl: &ttl,
+        proxied: &proxied,
+    };
+
+    let resp = match client
+        .post(&url)
+        .bearer_auth(decrypted_token)
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("DNS provider request failed: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+        }
+    };
+
+    let response = resp.json::<CreateRecordResponse>().await;
+
+    let new_token: DnsRecord = match response {
+        Ok(r) => r.result,
+        Err(e) => {
+            eprintln!("DNS Provider Error: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+        }
+    };
+
+    // Insert the data into the db with the returned cloudflare id
+    let result = conn.transaction(|conn| {
+        diesel::insert_into(dns_record::table)
+            .values((
+                dns_record::id.eq(&new_token.id),
+                dns_record::user_id.eq(user_id),
+                dns_record::record_name.eq(&new_token.name),
+                dns_record::zone_id.eq(&zone_id),
+                dns_record::content.eq(&new_token.content),
+                dns_record::ttl.eq(&new_token.ttl),
+                dns_record::record_type.eq(&new_token.record_type),
+                dns_record::proxied.eq(&new_token.proxied),
+            ))
+            .execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    });
+
+    match result {
+        Ok(_) => {
+            return (StatusCode::OK, Json("Added DNS token to account")).into_response();
+        }
+        Err(err) => {
+            eprintln!("DB error: {:?}", err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
+        }
+    }
+}
 
 async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse {
     let curr_user_id = params.user_id;
@@ -204,6 +337,7 @@ async fn get_dns_access_tokens(Query(params): Query<GetAccessTokens>) -> impl In
 
 async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResponse {
     // TODO: Add in a dns token here.
+    let name = body.name;
     let user_id = body.user_id;
     let dns_token = body.token;
     let id = Uuid::now_v7().to_string();
@@ -220,11 +354,14 @@ async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResp
 
     let new_token = NewDnsAccessToken {
         id: &id,
+        name: &name,
         user_id: &user_id,
         nonce: &encrypted.nonce,
         token_encrypted: &encrypted.ciphertext,
         tag: &encrypted.tag,
     };
+
+    dbg!(&new_token);
 
     let result = conn.transaction(|conn| {
         diesel::insert_into(dns_token::table)
@@ -236,6 +373,7 @@ async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResp
     match result {
         Ok(_) => (StatusCode::OK, "Added DNS token to account").into_response(),
         Err(err) => {
+            dbg!(&err);
             eprintln!("DB error: {:?}", err);
             (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
         }
@@ -341,6 +479,7 @@ async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, V
             eprintln!("DNS provider request failed: {:?}", e);
             return ApiResponse {
                 success: false,
+                message: "DNS provider request failed".to_string(),
                 data: (zone, Vec::new()),
             };
         }
@@ -349,12 +488,14 @@ async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, V
     match resp.json::<DnsRecordsResponse>().await {
         Ok(d) => ApiResponse {
             success: true,
+            message: "DNS records fetched successfully".to_string(),
             data: (zone, d.result),
         },
         Err(e) => {
             eprintln!("JSON parse error: {:?}", e);
             ApiResponse {
                 success: false,
+                message: "Failed to parse DNS records".to_string(),
                 data: (zone, Vec::new()),
             }
         }
@@ -365,6 +506,8 @@ async fn fetch_zone_records(client: &Client, zone: Zone) -> ApiResponse<(Zone, V
 #[derive(Debug, Deserialize, Serialize)]
 struct AddDnsRecord {
     user_id: String,
+    zone_id: String,
+    record_type: String,
     name: String,
     content: String,
     ttl: i32,
@@ -383,6 +526,7 @@ struct GetAccessTokens {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct AddAccessToken {
+    name: String,
     user_id: String,
     token: String,
 }
@@ -417,6 +561,21 @@ struct DnsZonesResponse {
     success: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct CreateRecordResponse {
+    result: DnsRecord,
+    success: bool,
+}
+
+#[derive(Serialize)]
+struct DnsRecordPayload<'a> {
+    r#type: &'a String,
+    name: &'a String,
+    content: &'a String,
+    ttl: &'a i32,
+    proxied: &'a bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct DnsRecordsResponse {
     result: Vec<DnsRecord>,
@@ -425,5 +584,6 @@ struct DnsRecordsResponse {
 #[derive(Debug, Deserialize, Serialize)]
 struct ApiResponse<T> {
     success: bool,
+    message: String,
     data: T,
 }

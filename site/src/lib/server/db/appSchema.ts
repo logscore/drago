@@ -15,6 +15,7 @@ import { user } from './authSchema'; // assuming auth schema file exports user
 // ---------------------------
 export const dnsToken = mysqlTable('dns_token', {
 	id: varchar('id', { length: 225 }).primaryKey(),
+	name: varchar('name', { length: 225 }).notNull(),
 	userId: varchar('user_id', { length: 36 })
 		.notNull()
 		.references(() => user.id, { onDelete: 'cascade' }),

@@ -1,12 +1,11 @@
-type ZoneRecordData = [Zone, DnsRecord[]][];
+export type ZoneRecordData = [Zone, DnsRecord[]][];
 
-interface Zone {
+export interface Zone {
 	id: string;
 	name: string;
-	status?: string;
 }
 
-interface DnsRecord {
+export interface DnsRecord {
 	id: string;
 	name: string;
 	content: string;
@@ -15,16 +14,25 @@ interface DnsRecord {
 	proxied: number;
 }
 
-interface AccessKey {
+export interface AccessToken {
 	id: string;
 	name: string;
-	status?: string;
 }
 
-interface AddRecordData{
-  name: string,
-  content: string,
-  type: string,
-  ttl: number,
-  proxied: number,
+export interface ApiKey {
+	id: string;
+	name: string;
+}
+
+export interface AddRecordData {
+	name: string;
+	content: string;
+	type: string;
+	ttl: number;
+	proxied: number;
+}
+
+export interface AddAccessToken {
+	name: string;
+	value: string;
 }

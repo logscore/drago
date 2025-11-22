@@ -41,14 +41,14 @@ diesel::table! {
         #[max_length = 36]
         user_id -> Varchar,
         #[max_length = 255]
-        record_name -> Varchar,
-        #[max_length = 255]
         zone_id -> Varchar,
+        #[max_length = 255]
+        record_name -> Varchar,
+        #[max_length = 16]
+        record_type -> Varchar,
         content -> Text,
         ttl -> Integer,
         proxied -> Bool,
-        #[max_length = 16]
-        record_type -> Varchar,
         last_synced_on -> Timestamp,
     }
 }
@@ -57,6 +57,8 @@ diesel::table! {
     dns_token (id) {
         #[max_length = 225]
         id -> Varchar,
+        #[max_length = 225]
+        name -> Varchar,
         #[max_length = 36]
         user_id -> Varchar,
         #[max_length = 12]
