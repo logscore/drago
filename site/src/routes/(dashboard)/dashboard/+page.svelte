@@ -28,7 +28,7 @@
 	// }));
 </script>
 
-<div class="mx-auto min-h-screen w-7xl p-4">
+<div class="mx-auto min-h-screen max-w-7xl p-4">
 	<main class="w-full">
 		<Tabs value={tab_value} onValueChange={(details) => (tab_value = details.value)}>
 			<Tabs.List class="mb-6 flex w-full gap-2 border-b pb-2">

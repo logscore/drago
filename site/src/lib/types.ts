@@ -11,12 +11,13 @@ export interface DnsRecord {
 	content: string;
 	ttl: number;
 	type: string;
-	proxied: number;
+	proxied: boolean;
 }
 
 export interface AccessToken {
 	id: string;
 	name: string;
+	created_on: string;
 }
 
 export interface ApiKey {

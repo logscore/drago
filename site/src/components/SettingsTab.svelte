@@ -9,6 +9,9 @@
 	}
 	const { userId }: Props = $props();
 
+	let deleteDialogOpen = false;
+	let deleteTokenId: string | undefined;
+
 	async function handleSignOut() {
 		await authClient.signOut();
 		goto('/');
@@ -29,15 +32,27 @@
 		enabled: !!userId
 	}));
 
-
-	async function handleAddRecord(tokenData: AddAccessToken) {
-		// TODO: Implement API call to add record
-		console.log('Adding', tokenData);
-	}
-
-	async function onDelete(recordId: string) {
+	async function deleteToken(tokenId: string) {
 		// TODO: Implement API call to delete record
-		console.log('Deleting', recordId);
+		try {
+			const response = await fetch(`http://127.0.0.1:8080/access_token?token_id=${tokenId}`, {
+				method: 'DELETE'
+			});
+
+			if (!response.ok) {
+				throw new Error('Network response was not ok');
+			}
+
+			// Close dialog
+			deleteDialogOpen = false;
+
+			// Refresh records
+			accessTokensQuery.refetch();
+		} catch (error) {
+			console.error('Error deleting record:', error);
+			operationMessage = `Error deleting record: ${error}`;
+			operationSuccess = false;
+		}
 	}
 </script>
 
@@ -56,7 +71,7 @@
 			<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
 				<div class="mb-4 flex items-center justify-between border-b border-neutral-800 pb-2">
 					<div>
-						<h2 class="text-xl font-bold">DNS Access Tokens</h2>
+						<h2 class="text-2xl font-bold">DNS Access Tokens</h2>
 					</div>
 					<button
 						class="preset-filled-500 btn font-semibold"
@@ -65,17 +80,30 @@
 						+ Add Provider
 					</button>
 				</div>
+				<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">
+					<div class="col-span-4">NAME</div>
+					<div class="col-span-6">CREATED DATE</div>
+					<div class="col-span-2 pr-2 text-right">ACTIONS</div>
+				</div>
 				{#each accessTokensQuery.data as accessToken}
-					<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
+					<div
+						class="mb-2 grid grid-cols-12 rounded border border-neutral-800 bg-neutral-900 px-4 py-3"
+					>
 						<!-- Access Token Field -->
-						<div class="col-span-8 truncate break-all">
+						<div class="col-span-4 truncate break-all">
 							<span class="font-mono text-sm">
-								{accessToken.id}
+								{accessToken.name}
+							</span>
+						</div>
+
+						<div class="col-span-6 truncate break-all">
+							<span class="font-mono text-sm">
+								{accessToken.created_on}
 							</span>
 						</div>
 
 						<!-- Actions -->
-						<div class="col-span-2 flex justify-end gap-2">
+						<div class="col-span-2 flex justify-end">
 							<button
 								onclick={(e) => {
 									e.preventDefault();
