@@ -4,28 +4,45 @@
 	import ApiKeysTab from '../../../components/ApiKeysTab.svelte';
 	import SettingsTab from '../../../components/SettingsTab.svelte';
 	import DomainsTab from '../../../components/DomainsTab.svelte';
-
-	const session = authClient.useSession();
+	import { createQuery } from '@tanstack/svelte-query';
+	import type { ZoneRecordData } from '$lib/types';
 
 	let tab_value = $state('domains');
 
-	// Derive user ID reactively
-	const userId = $derived($session.data?.user?.id);
+	let jwtData = $state<string>('');
 
-	// const apiKeysQuery = createQuery(() => ({
-	// 	queryKey: ['api_keys', userId],
-	// 	queryFn: async () => {
-	// 		if (!userId) {
-	// 			throw new Error('User ID is required');
-	// 		}
-	// 		const response = await fetch(`http://127.0.0.1:8080/api_keys?user_id=${userId}`);
-	// 		if (!response.ok) {
-	// 			throw new Error('Network response was not ok');
-	// 		}
-	// 		return response.json();
-	// 	},
-	// 	enabled: !!userId
-	// }));
+	$effect(() => {
+		async function fetchJWT() {
+			const { data, error } = await authClient.token();
+			console.log(data);
+			if (error) {
+				console.error(error.message);
+			}
+			if (data) {
+				jwtData = data.token;
+			}
+		}
+		fetchJWT();
+	});
+
+	const recordsQuery = createQuery<ZoneRecordData>(() => ({
+		queryKey: ['records', jwtData],
+		queryFn: async () => {
+			if (!jwtData) {
+				throw new Error('User not signed in');
+			}
+			const response = await fetch(`http://127.0.0.1:8080/records`, {
+				headers: {
+					Authorization: `Bearer ${jwtData}`
+				}
+			});
+			if (!response.ok) {
+				throw new Error('Network response was not ok');
+			}
+			return response.json();
+		},
+		enabled: !!jwtData
+	}));
 </script>
 
 <div class="mx-auto min-h-screen max-w-7xl p-4">
@@ -41,15 +58,15 @@
 			</Tabs.List>
 
 			<Tabs.Content value="domains" class="w-full">
-				<DomainsTab {userId} />
+				<DomainsTab {jwtData} />
 			</Tabs.Content>
 
 			<Tabs.Content value="api keys" class="w-full">
-				<ApiKeysTab {userId} />
+				<ApiKeysTab {jwtData} recordScopes={recordsQuery.data!} />
 			</Tabs.Content>
 
 			<Tabs.Content value="settings" class="w-full">
-				<SettingsTab {userId} />
+				<SettingsTab {jwtData} />
 			</Tabs.Content>
 		</Tabs>
 	</main>

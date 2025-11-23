@@ -23,6 +23,8 @@ export interface AccessToken {
 export interface ApiKey {
 	id: string;
 	name: string;
+	created_on: string;
+	scope: string;
 }
 
 export interface AddRecordData {

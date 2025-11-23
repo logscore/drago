@@ -5,10 +5,10 @@
 	import { createQuery } from '@tanstack/svelte-query';
 
 	interface Props {
-		userId: string | undefined;
+		jwtData: string;
 	}
 
-	let { userId }: Props = $props();
+	let { jwtData }: Props = $props();
 
 	// Form state
 	let ttl = $state(1);
@@ -30,18 +30,22 @@
 	let operationSuccess = $state<boolean>(false);
 
 	const recordsQuery = createQuery<ZoneRecordData>(() => ({
-		queryKey: ['records', userId],
+		queryKey: ['records', jwtData],
 		queryFn: async () => {
-			if (!userId) {
-				throw new Error('User ID is required');
+			if (!jwtData) {
+				throw new Error('User not signed in');
 			}
-			const response = await fetch(`http://127.0.0.1:8080/records?user_id=${userId}`);
+			const response = await fetch(`http://127.0.0.1:8080/records`, {
+				headers: {
+					Authorization: `Bearer ${jwtData}`
+				}
+			});
 			if (!response.ok) {
 				throw new Error('Network response was not ok');
 			}
 			return response.json();
 		},
-		enabled: !!userId
+		enabled: !!jwtData
 	}));
 
 	async function handleAddDomain(zoneId: string | undefined, zoneName: string | undefined) {
@@ -56,10 +60,10 @@
 			const response = await fetch('http://127.0.0.1:8080/record', {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${jwtData}`
 				},
 				body: JSON.stringify({
-					user_id: userId,
 					zone_id: zoneId,
 					zone_name: zoneName,
 					name: domainName,
@@ -100,8 +104,11 @@
 	async function handleDelete(zoneId: string, recordId: string) {
 		try {
 			const response = await fetch(
-				`http://127.0.0.1:8080/record?user_id=${userId}&record_id=${recordId}&zone_id=${zoneId}`,
+				`http://127.0.0.1:8080/record?record_id=${recordId}&zone_id=${zoneId}`,
 				{
+					headers: {
+						Authorization: `Bearer ${jwtData}`
+					},
 					method: 'DELETE'
 				}
 			);
@@ -292,7 +299,7 @@
 				>
 					<!-- Name -->
 					<div>
-						<label for="record-name" class="mb-1 block text-sm font-medium text-gray-300">
+						<label for="record-name" class="mb-1 block text-sm font-medium text-neutral-300">
 							Name
 						</label>
 						<input
@@ -302,13 +309,13 @@
 							placeholder="@, www, or subdomain"
 							bind:value={domainName}
 							required
-							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 						/>
 					</div>
 
 					<!-- Content -->
 					<div>
-						<label for="record-content" class="mb-1 block text-sm font-medium text-gray-300">
+						<label for="record-content" class="mb-1 block text-sm font-medium text-neutral-300">
 							Content
 						</label>
 						<input
@@ -318,7 +325,7 @@
 							placeholder="IPv4 address or target"
 							bind:value={content}
 							required
-							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 						/>
 					</div>
 
@@ -326,14 +333,14 @@
 					<div class="flex gap-4">
 						<!-- Record Type -->
 						<div class="flex-1">
-							<label for="record-type" class="mb-1 block text-sm font-medium text-gray-300">
+							<label for="record-type" class="mb-1 block text-sm font-medium text-neutral-300">
 								Type
 							</label>
 							<select
 								id="record-type"
 								name="type"
 								bind:value={recordType}
-								class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+								class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 							>
 								<option value="A">A</option>
 								<option value="CNAME">CNAME</option>
@@ -345,14 +352,14 @@
 
 						<!-- TTL -->
 						<div class="flex-1">
-							<label for="record-ttl" class="mb-1 block text-sm font-medium text-gray-300">
+							<label for="record-ttl" class="mb-1 block text-sm font-medium text-neutral-300">
 								TTL
 							</label>
 							<select
 								id="record-ttl"
 								name="ttl"
 								bind:value={ttl}
-								class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+								class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 							>
 								<option value={1}>Auto</option>
 								<option value={60}>1 min</option>
@@ -371,7 +378,7 @@
 								bind:checked={proxied}
 								class="text-white-100 h-4 w-4 rounded border-neutral-600 bg-neutral-800 focus:ring-neutral-600"
 							/>
-							<label for="record-proxied" class="text-sm font-medium text-gray-300"> Proxy </label>
+							<label for="record-proxied" class="text-sm font-medium text-neutral-300"> Proxy </label>
 						</div>
 					</div>
 

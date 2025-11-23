@@ -19,11 +19,18 @@ use uuid::Uuid;
 use crate::db::{models::NewDnsAccessToken, *};
 use crate::{
     db::schema::{dns_record, dns_token, dns_zone},
-    lib::{encryption::decrypt, encryption::encrypt},
+    lib::{
+        auth::{AuthState, User},
+        encryption::decrypt,
+        encryption::encrypt,
+    },
 };
 
 #[tokio::main]
 async fn main() {
+    // 1. Initialize Auth State (Replace with your actual Better Auth URL)
+    let auth_state = AuthState::new("http://localhost:5173");
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([
@@ -35,6 +42,7 @@ async fn main() {
         ])
         .allow_headers(Any)
         .expose_headers(Any);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/records", get(list_dns_records))
@@ -43,7 +51,8 @@ async fn main() {
         .route("/access_tokens", get(get_dns_access_tokens))
         .route("/access_token", post(add_dns_access_token))
         .route("/access_token", delete(delete_access_token))
-        .layer(cors);
+        .layer(cors)
+        .with_state(auth_state); // Inject state here
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -53,10 +62,22 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json("Drago is running".to_string()))
 }
 
-async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
+// REFACTORED: Removed user_id from struct
+#[derive(Debug, Deserialize, Serialize)]
+struct AddDnsRecord {
+    zone_id: String,
+    zone_name: String,
+    record_type: String,
+    name: String,
+    content: String,
+    ttl: i32,
+    proxied: bool,
+}
+
+async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
+    let user_id = claims.sub;
     let zone_id = body.zone_id;
     let zone_name = body.zone_name;
-    let user_id = body.user_id;
     let record_type = body.record_type;
     let name = body.name;
     let content = body.content;
@@ -64,11 +85,8 @@ async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
     let proxied = body.proxied;
 
     let conn = &mut establish_connection();
-
     let subdomain = format!("{}.{}", name, zone_name);
 
-    // Check if there is a record in the db with the same name and zone id
-    // SELECT id FROM dns_records WHERE user_id = user_id AND zone_id = zone_id AND record_name = name;
     let result = dns_record::table
         .select(dns_record::id)
         .filter(dns_record::user_id.eq(&user_id))
@@ -77,33 +95,32 @@ async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
         .first::<String>(conn)
         .optional();
 
+    // ... (Rest of DB logic remains the same, logic uses strict user_id from token)
+
     let existing_record_id = match result {
         Ok(v) => v,
         Err(err) => {
-            eprintln!("DB error: {err}");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
         }
     };
 
-    if let Some(id) = existing_record_id {
-        println!("Found record {id}");
+    if existing_record_id.is_some() {
         return (StatusCode::CONFLICT, Json("Record already exists")).into_response();
     }
 
     let decrypted_token = match get_user_token(conn, &user_id) {
         Ok(token) => token,
-        Err(e) => {
-            eprintln!("Failed to get user token: {}", e);
+        Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json("Failed to get user token".to_string()),
+                Json("Failed to get user token"),
             )
                 .into_response();
         }
     };
-    // POST to cloudflare with the new dns record
-    let client = reqwest::Client::new();
 
+    // ... (Cloudflare Logic) ...
+    let client = reqwest::Client::new();
     let url = format!(
         "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
         zone_id
@@ -125,28 +142,20 @@ async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
         .await
     {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("DNS provider request failed: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
-        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response(),
     };
 
     let response = resp.json::<CreateRecordResponse>().await;
-
-    let new_token: DnsRecord = match response {
+    let new_token = match response {
         Ok(r) => r.result,
-        Err(e) => {
-            eprintln!("DNS Provider Error: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
-        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response(),
     };
 
-    // Insert the data into the db with the returned cloudflare id
     let result = conn.transaction(|conn| {
         diesel::insert_into(dns_record::table)
             .values((
                 dns_record::id.eq(&new_token.id),
-                dns_record::user_id.eq(user_id),
+                dns_record::user_id.eq(&user_id), // Secure ID
                 dns_record::record_name.eq(&new_token.name),
                 dns_record::zone_id.eq(&zone_id),
                 dns_record::content.eq(&new_token.content),
@@ -159,23 +168,15 @@ async fn add_dns_record(Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
     });
 
     match result {
-        Ok(_) => {
-            return (StatusCode::CREATED, Json("Record added successfully")).into_response();
-        }
-        Err(err) => {
-            eprintln!("DB error: {:?}", err);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
-        }
+        Ok(_) => (StatusCode::CREATED, Json("Record added successfully")).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
     }
 }
 
-async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse {
-    let curr_user_id = params.user_id;
-
+async fn list_dns_records(User(claims): User) -> impl IntoResponse {
+    let curr_user_id = claims.sub;
     let mut conn = establish_connection();
-    use crate::db::schema::dns_token;
 
-    // Fetch the zones with their dns records from DNS provider
     let zones_result: Result<Vec<(String, String)>, DieselError> = dns_zone::table
         .filter(dns_zone::user_id.eq(&curr_user_id))
         .select((dns_zone::id, dns_zone::zone_name))
@@ -183,17 +184,12 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
 
     let zones = match zones_result {
         Ok(rows) => rows,
-        Err(e) => {
-            eprintln!("Zone Query failed: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Zone DB Error").into_response();
-        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Zone DB Error").into_response(),
     };
 
     let mut zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> = Vec::new();
 
     if zones.is_empty() {
-        // We dont have the DNS records and zones from the DNS provider
-        // Fetch the dns access token
         let token_data = dns_token::table
             .filter(dns_token::user_id.eq(&curr_user_id))
             .select((
@@ -205,32 +201,23 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
             .first::<(String, Vec<u8>, Vec<u8>, Vec<u8>)>(&mut conn)
             .optional();
 
-        // Handle DB error or Missing Token
         let (token_id, ciphertext, nonce, tag) = match token_data {
             Ok(Some(data)) => data,
             Ok(None) => {
                 return (StatusCode::NOT_FOUND, "No DNS Token found for user").into_response();
             }
-            Err(e) => {
-                eprintln!("Token Query failed: {:?}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
-            }
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
         };
 
-        // Decrypt the token
         let decrypted_token = match decrypt(&nonce, &ciphertext, &tag) {
             Ok(t) => t,
-            Err(e) => {
-                eprintln!("Decryption failed: {:?}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Security Error").into_response();
-            }
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Security Error").into_response(),
         };
 
         zone_dns_data =
             match initialize_zones(&mut conn, &curr_user_id, &decrypted_token, &token_id).await {
                 Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Error fetching DNS records: {:?}", e);
+                Err(_) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Error fetching DNS Zones",
@@ -239,73 +226,72 @@ async fn list_dns_records(Query(params): Query<GetRecords>) -> impl IntoResponse
                 }
             };
 
-        // Return the zone dns data
-        (StatusCode::OK, Json(&zone_dns_data)).into_response()
-    } else {
-        // We have records in the db, we use those
-        // Query the DB for the users dns zones
-        let raw_zones = match dns_zone::table
-            .filter(dns_zone::user_id.eq(&curr_user_id))
-            .select((dns_zone::id, dns_zone::zone_name))
-            .load::<(String, String)>(&mut conn)
-        {
-            Ok(z) => z,
-            Err(e) => {
-                eprintln!("Zone fetch error: {:?}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
-            }
-        };
+        return (StatusCode::OK, Json(&zone_dns_data)).into_response();
+    }
 
-        // Loop through zones and fetch their records
-        for (z_id, z_name) in raw_zones {
-            let raw_records = dns_record::table
-                .filter(dns_record::zone_id.eq(&z_id))
-                .select((
-                    dns_record::id,
-                    dns_record::record_name,
-                    dns_record::content,
-                    dns_record::ttl,
-                    dns_record::record_type,
-                    dns_record::proxied,
-                ))
-                // Figure out how to make this tuple just a model struct in models.rs
-                .load::<(String, String, String, i32, String, bool)>(&mut conn)
-                .unwrap_or_default();
-
-            // Map to DnsRecord struct
-            let records_structs: Vec<DnsRecord> = raw_records
-                .into_iter()
-                .map(
-                    |(r_id, r_name, r_content, r_ttl, r_type, r_proxied)| DnsRecord {
-                        id: r_id,
-                        name: r_name,
-                        content: r_content,
-                        ttl: r_ttl,
-                        record_type: r_type,
-                        proxied: r_proxied,
-                    },
-                )
-                .collect();
-
-            // Map to Zone Struct
-            let zone_struct = Zone {
-                id: z_id,
-                name: z_name,
-                status: "active".to_string(),
-            };
-
-            zone_dns_data.push((zone_struct, records_structs));
-        }
-
-        (StatusCode::OK, Json(&zone_dns_data)).into_response()
+    // Existing DB logic
+    let raw_zones = match dns_zone::table
+        .filter(dns_zone::user_id.eq(&curr_user_id))
+        .select((dns_zone::id, dns_zone::zone_name))
+        .load::<(String, String)>(&mut conn)
+    {
+        Ok(z) => z,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
     };
 
-    // Not sure why this part is needed, but Rust yells at me if i dont have it. But we should never get to this point in the logic
+    for (z_id, z_name) in raw_zones {
+        let raw_records = dns_record::table
+            .filter(dns_record::zone_id.eq(&z_id))
+            .select((
+                dns_record::id,
+                dns_record::record_name,
+                dns_record::content,
+                dns_record::ttl,
+                dns_record::record_type,
+                dns_record::proxied,
+            ))
+            .load::<(String, String, String, i32, String, bool)>(&mut conn)
+            .unwrap_or_default();
+
+        let records_structs: Vec<DnsRecord> = raw_records
+            .into_iter()
+            .map(
+                |(r_id, r_name, r_content, r_ttl, r_type, r_proxied)| DnsRecord {
+                    id: r_id,
+                    name: r_name,
+                    content: r_content,
+                    ttl: r_ttl,
+                    record_type: r_type,
+                    proxied: r_proxied,
+                },
+            )
+            .collect();
+
+        let zone_struct = Zone {
+            id: z_id,
+            name: z_name,
+            status: "active".to_string(),
+        };
+
+        zone_dns_data.push((zone_struct, records_structs));
+    }
+
     (StatusCode::OK, Json(&zone_dns_data)).into_response()
 }
 
-async fn delete_dns_record(Query(params): Query<DeleteDnsRecord>) -> impl IntoResponse {
-    let user_id = params.user_id;
+// REFACTORED
+#[derive(Debug, Deserialize, Serialize)]
+struct DeleteDnsRecord {
+    // user_id: String, <-- DELETED
+    record_id: String,
+    zone_id: String,
+}
+
+async fn delete_dns_record(
+    User(claims): User, // AUTHENTICATED
+    Query(params): Query<DeleteDnsRecord>,
+) -> impl IntoResponse {
+    let user_id = claims.sub; // Secure ID
     let record_id = params.record_id;
     let zone_id = params.zone_id;
 
@@ -314,17 +300,9 @@ async fn delete_dns_record(Query(params): Query<DeleteDnsRecord>) -> impl IntoRe
 
     let decrypted_token = match get_user_token(conn, &user_id) {
         Ok(token) => token,
-        Err(e) => {
-            eprintln!("Failed to get user token: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json("Failed to get user token".to_string()),
-            )
-                .into_response();
-        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(e)).into_response(),
     };
 
-    // Delete from cloudflare
     let url = format!(
         "https://api.cloudflare.com/client/v4/zones/{}/dns_records/{}",
         zone_id, record_id
@@ -337,11 +315,10 @@ async fn delete_dns_record(Query(params): Query<DeleteDnsRecord>) -> impl IntoRe
         .await
     {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("DNS provider request failed: {:?}", e);
+        Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json("DNS provider request failed".to_string()),
+                Json("DNS provider request failed"),
             )
                 .into_response();
         }
@@ -351,15 +328,11 @@ async fn delete_dns_record(Query(params): Query<DeleteDnsRecord>) -> impl IntoRe
 
     dbg!(&response);
 
-    let deleted_token: DeletedDnsRecord = match response {
+    let deleted_token = match response {
         Ok(r) => r.result,
-        Err(e) => {
-            eprintln!("DNS Provider Error: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
-        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response(),
     };
 
-    // If successful, delete from the db
     let result = conn.transaction(|conn| {
         diesel::delete(
             dns_record::table
@@ -372,16 +345,16 @@ async fn delete_dns_record(Query(params): Query<DeleteDnsRecord>) -> impl IntoRe
     });
 
     match result {
-        Ok(_) => (StatusCode::OK, "Deleted DNS token from account").into_response(),
-        Err(err) => {
-            eprintln!("DB error: {:?}", err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
-        }
+        Ok(_) => (StatusCode::OK, "Deleted DNS record from account").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }
 
-async fn get_dns_access_tokens(Query(params): Query<GetAccessTokens>) -> impl IntoResponse {
-    let user_id = params.user_id;
+async fn get_dns_access_tokens(
+    User(claims): User, // AUTHENTICATED
+                        // Params removed
+) -> impl IntoResponse {
+    let user_id = claims.sub; // Secure ID
     let mut conn = establish_connection();
 
     let tokens = match dns_token::table
@@ -389,39 +362,40 @@ async fn get_dns_access_tokens(Query(params): Query<GetAccessTokens>) -> impl In
         .select((dns_token::name, dns_token::id, dns_token::created_on))
         .load::<(String, String, NaiveDateTime)>(&mut conn)
     {
-        Ok(tokens) => {
-            let mapped: Vec<DnsAccessToken> = tokens
-                .into_iter()
-                .map(|(name, id, created_on)| DnsAccessToken {
-                    name,
-                    id,
-                    created_on,
-                })
-                .collect();
-            mapped
-        }
-        Err(e) => {
-            eprintln!("Failed to retrieve access tokens: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response();
-        }
+        Ok(tokens) => tokens
+            .into_iter()
+            .map(|(name, id, created_on)| DnsAccessToken {
+                name,
+                id,
+                created_on,
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
     };
 
     (StatusCode::OK, Json(&tokens)).into_response()
 }
 
-async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResponse {
-    // TODO: Add in a dns token here.
+// REFACTORED
+#[derive(Debug, Deserialize, Serialize)]
+struct AddAccessToken {
+    name: String,
+    token: String,
+}
+
+async fn add_dns_access_token(
+    User(claims): User, // AUTHENTICATED
+    Json(body): Json<AddAccessToken>,
+) -> impl IntoResponse {
     let name = body.name;
-    let user_id = body.user_id;
-    let dns_token = body.token;
+    let user_id = claims.sub; // Secure ID
+    let dns_token_str = body.token;
     let id = Uuid::now_v7().to_string();
     let mut conn = establish_connection();
 
-    // Encrypts the dns access token
-    let encrypted = match encrypt(&dns_token) {
+    let encrypted = match encrypt(&dns_token_str) {
         Ok(enc) => enc,
-        Err(e) => {
-            eprintln!("Encryption failed: {:?}", e);
+        Err(_) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json("Encryption error")).into_response();
         }
     };
@@ -444,33 +418,36 @@ async fn add_dns_access_token(Json(body): Json<AddAccessToken>) -> impl IntoResp
 
     match result {
         Ok(_) => (StatusCode::OK, Json("Added DNS token to account")).into_response(),
-        Err(err) => {
-            eprintln!("DB error: {:?}", err);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json("Failed to add token to account"),
-            )
-                .into_response()
-        }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json("Failed to add token"),
+        )
+            .into_response(),
     }
 }
 
-async fn delete_access_token(Query(params): Query<DeleteAccessToken>) -> impl IntoResponse {
+async fn delete_access_token(
+    User(claims): User, // AUTHENTICATED
+    Query(params): Query<DeleteAccessToken>,
+) -> impl IntoResponse {
     let dns_token_id = params.token_id;
-
-    let conn = &mut establish_connection();
+    let user_id = claims.sub; // Secure ID
+    let mut conn = establish_connection();
 
     let result = conn.transaction(|conn| {
-        diesel::delete(dns_token::table.filter(dns_token::id.eq(dns_token_id))).execute(conn)?;
+        // SECURITY: Ensure the token belongs to the user trying to delete it
+        diesel::delete(
+            dns_token::table
+                .filter(dns_token::id.eq(dns_token_id))
+                .filter(dns_token::user_id.eq(user_id)),
+        )
+        .execute(conn)?;
         Ok::<_, diesel::result::Error>(())
     });
 
     match result {
         Ok(_) => (StatusCode::OK, "Deleted DNS token from account").into_response(),
-        Err(err) => {
-            eprintln!("DB error: {:?}", err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
-        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }
 
@@ -627,42 +604,7 @@ fn get_user_token(
     Ok(decrypted_token)
 }
 
-// Types
-#[derive(Debug, Deserialize, Serialize)]
-struct AddDnsRecord {
-    user_id: String,
-    zone_id: String,
-    zone_name: String,
-    record_type: String,
-    name: String,
-    content: String,
-    ttl: i32,
-    proxied: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GetRecords {
-    user_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DeleteDnsRecord {
-    user_id: String,
-    record_id: String,
-    zone_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GetAccessTokens {
-    user_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct AddAccessToken {
-    name: String,
-    user_id: String,
-    token: String,
-}
+// Types (duplicate definitions removed - see above for struct definitions)
 
 #[derive(Debug, Deserialize, Serialize)]
 struct DeleteAccessToken {

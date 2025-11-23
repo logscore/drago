@@ -3,6 +3,7 @@ import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from '../server/db/index';
+import { jwt } from 'better-auth/plugins';
 
 export const auth = betterAuth({
 	database: drizzleAdapter(db, {
@@ -12,6 +13,6 @@ export const auth = betterAuth({
 		enabled: true,
 		autoSignIn: true
 	},
-	plugins: [sveltekitCookies(getRequestEvent)], // make sure this is the last plugin in the array
+	plugins: [jwt(), sveltekitCookies(getRequestEvent)], // make sure this is the last plugin in the array
 	telemetry: { enabled: false }
 });

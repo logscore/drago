@@ -3,13 +3,14 @@
 	import { authClient } from '$lib/auth/authClient';
 	import { XIcon } from '@lucide/svelte';
 	import { Dialog, Portal } from '@skeletonlabs/skeleton-svelte';
-	import type { AccessToken, AddAccessToken } from '$lib/types';
+	import type { AccessToken } from '$lib/types';
 	import { createQuery } from '@tanstack/svelte-query';
 
 	interface Props {
-		userId: string | undefined;
+		jwtData: string;
 	}
-	const { userId }: Props = $props();
+
+	let { jwtData }: Props = $props();
 
 	// Dialog state
 	let addDialogOpen = $state(false);
@@ -32,18 +33,22 @@
 	}
 
 	const accessTokensQuery = createQuery<AccessToken[]>(() => ({
-		queryKey: ['access_keys', userId],
+		queryKey: ['access_keys', jwtData],
 		queryFn: async () => {
-			if (!userId) {
+			if (!jwtData) {
 				throw new Error('User ID is required');
 			}
-			const response = await fetch(`http://127.0.0.1:8080/access_tokens?user_id=${userId}`);
+			const response = await fetch(`http://127.0.0.1:8080/access_tokens`, {
+				headers: {
+					Authorization: `Bearer ${jwtData}`
+				}
+			});
 			if (!response.ok) {
 				throw new Error('Network response was not ok');
 			}
 			return response.json();
 		},
-		enabled: !!userId
+		enabled: !!jwtData
 	}));
 
 	async function addAccessToken() {
@@ -58,10 +63,10 @@
 			const response = await fetch('http://127.0.0.1:8080/access_token', {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${jwtData}`
 				},
 				body: JSON.stringify({
-					user_id: userId,
 					name: tokenName,
 					token: tokenValue
 				})
@@ -93,6 +98,9 @@
 	async function deleteToken(tokenId: string) {
 		try {
 			const response = await fetch(`http://127.0.0.1:8080/access_token?token_id=${tokenId}`, {
+				headers: {
+					Authorization: `Bearer ${jwtData}`
+				},
 				method: 'DELETE'
 			});
 
@@ -138,23 +146,23 @@
 <p class="mb-4 text-sm text-neutral-400">Manage your account settings.</p>
 
 <div class="w-full rounded">
-	{#if accessTokensQuery.isPending}
-		<p class="p-4 text-neutral-500">Loading records...</p>
-	{:else if accessTokensQuery.isError}
-		<p class="p-4 text-red-500">
-			Error loading records: {accessTokensQuery.error || 'Unknown error'}
-		</p>
-	{:else if accessTokensQuery.isSuccess}
-		<div class="mb-8 space-y-8">
-			<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
-				<div class="mb-4 flex items-center justify-between border-b border-neutral-800 pb-2">
-					<div>
-						<h2 class="text-2xl font-bold">DNS Access Tokens</h2>
-					</div>
-					<button class="preset-filled-500 btn font-semibold" onclick={openAddDialog}>
-						+ Add Provider
-					</button>
+	<div class="mb-8 space-y-8">
+		<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
+			<div class="mb-4 flex items-center justify-between border-b border-neutral-800 pb-2">
+				<div>
+					<h2 class="text-2xl font-bold">DNS Access Tokens</h2>
 				</div>
+				<button class="preset-filled-500 btn font-semibold" onclick={openAddDialog}>
+					+ Add Provider
+				</button>
+			</div>
+			{#if accessTokensQuery.isPending}
+				<p class="p-4 text-neutral-500">Loading records...</p>
+			{:else if accessTokensQuery.isError}
+				<p class="p-4 text-red-500">
+					Error loading records: {accessTokensQuery.error || 'Unknown error'}
+				</p>
+			{:else if accessTokensQuery.isSuccess && accessTokensQuery.data.length > 0}
 				<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">
 					<div class="col-span-4">NAME</div>
 					<div class="col-span-6">CREATED DATE</div>
@@ -188,15 +196,13 @@
 						</div>
 					</div>
 				{/each}
-			</div>
+			{:else}
+				<div class="w-full rounded p-4">
+					<p>No DNS providers yet.</p>
+				</div>
+			{/if}
 		</div>
-
-		{#if accessTokensQuery && !accessTokensQuery.data}
-			<div class="w-full rounded p-4">
-				<p>No DNS providers yet.</p>
-			</div>
-		{/if}
-	{/if}
+	</div>
 
 	<button onclick={handleSignOut} class="hover:bg-red-550 btn bg-red-500"> Sign Out </button>
 </div>
@@ -240,7 +246,7 @@
 				<form onsubmit={addAccessToken} class="space-y-4">
 					<!-- Token Name -->
 					<div>
-						<label for="token-name" class="mb-1 block text-sm font-medium text-gray-300">
+						<label for="token-name" class="mb-1 block text-sm font-medium text-neutral-300">
 							Name
 						</label>
 						<input
@@ -251,12 +257,12 @@
 							bind:value={tokenName}
 							max="255"
 							required
-							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 						/>
 					</div>
 
 					<div>
-						<label for="token-value" class="mb-1 block text-sm font-medium text-gray-300">
+						<label for="token-value" class="mb-1 block text-sm font-medium text-neutral-300">
 							Value
 						</label>
 						<input
@@ -266,7 +272,7 @@
 							placeholder="4e545fc3ld..."
 							bind:value={tokenValue}
 							required
-							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-gray-100 shadow-sm sm:text-sm"
+							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
 						/>
 					</div>
 

@@ -22,3 +22,6 @@ aes-gcm = "0.10.3"
 hex = "0.4.3"
 anyhow = "1.0.100"
 tower-http = {version="0.6.6", features=["cors"]}
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+ed25519-dalek = "2.1"
+serde_json = "1.0"
