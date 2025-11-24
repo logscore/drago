@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ApiKey, ZoneRecordData } from '$lib/types';
-	import { XIcon } from '@lucide/svelte';
+	import { Check, Copy, XIcon } from '@lucide/svelte';
 	import { Dialog, Portal } from '@skeletonlabs/skeleton-svelte';
 	import { createMutation, createQuery } from '@tanstack/svelte-query';
 
@@ -11,10 +11,15 @@
 
 	let { jwtData, recordScopes }: Props = $props();
 
+	// Single source of truth for the "add key" form
 	let addKeyData = $state({
 		name: '',
-		scope: ''
+		scope: '', // will hold the selected record's id
+		zoneId: '',
+		recordId: ''
 	});
+
+	let apiKeyReturned = $state('');
 
 	// Dialog state
 	let addDialogOpen = $state(false);
@@ -22,10 +27,6 @@
 
 	// Current key for operations
 	let currentApiKeyId = $state<string>('');
-
-	// Form state for adding a key
-	let keyName = $state('');
-	let keyScope = $state('');
 
 	// Operation feedback
 	let operationMessage = $state<string>('');
@@ -51,18 +52,19 @@
 	}));
 
 	async function deleteApiKey(keyId: string) {
-		console.log('Deleting API key.');
+		console.log('Deleting API key.', keyId);
+		// TODO: wire this up to your delete endpoint and invalidate the query
 	}
 
 	const addTokenMutation = createMutation(() => ({
-		mutationFn: async (addKeyData: { name: string; scope: string }) => {
+		mutationFn: async (data: { name: string; scope: string; zoneId: string; recordId: string }) => {
 			const response = await fetch('http://127.0.0.1:8080/api_key', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${jwtData}`
 				},
-				body: JSON.stringify(addKeyData)
+				body: JSON.stringify(data)
 			});
 
 			if (!response.ok) {
@@ -70,20 +72,40 @@
 			}
 
 			return response.json();
+		},
+		onSuccess: (data) => {
+			apiKeyReturned = data;
+			operationSuccess = true;
+			operationMessage = 'API key created successfully.';
+			// reset form
+			addKeyData.name = '';
+			addKeyData.scope = '';
+			addKeyData.zoneId = '';
+			addKeyData.recordId = '';
+			apiKeysQuery.refetch();
+		},
+		onError: (error: unknown) => {
+			operationSuccess = false;
+			operationMessage = error instanceof Error ? error.message : 'Failed to add token.';
 		}
 	}));
 
-	function submitApiKeyData() {
+	function submitApiKeyData(event: Event) {
+		event.preventDefault();
+
 		addTokenMutation.mutate({
-			name: keyName,
-			scope: keyScope
+			name: addKeyData.name,
+			scope: addKeyData.scope,
+			zoneId: addKeyData.zoneId,
+			recordId: addKeyData.recordId
 		});
 	}
 
 	function openAddDialog() {
-		// Reset form and message
-		keyName = '';
-		keyScope = '';
+		addKeyData.name = '';
+		addKeyData.scope = '';
+		addKeyData.zoneId = '';
+		addKeyData.recordId = '';
 		operationMessage = '';
 		addDialogOpen = true;
 	}
@@ -92,6 +114,41 @@
 		currentApiKeyId = keyId;
 		operationMessage = '';
 		deleteDialogOpen = true;
+	}
+
+	let copied = $state(false);
+	let timeoutId: number | null = null;
+
+	async function copyKey() {
+		try {
+			await navigator.clipboard.writeText(apiKeyReturned);
+			copied = true;
+
+			if (timeoutId) clearTimeout(timeoutId);
+			timeoutId = window.setTimeout(() => {
+				copied = false;
+			}, 1500);
+		} catch (err) {
+			console.error('Failed to copy API key:', err);
+		}
+	}
+
+	// When a record is selected, we populate zoneId + recordId in state
+	function handleRecordSelect(event: Event) {
+		const select = event.target as HTMLSelectElement;
+		const option = select.selectedOptions[0];
+
+		if (!option) {
+			addKeyData.zoneId = '';
+			addKeyData.recordId = '';
+			return;
+		}
+
+		const zoneId = option.dataset.zoneId ?? '';
+		const recordId = option.dataset.recordId ?? option.value;
+
+		addKeyData.zoneId = zoneId;
+		addKeyData.recordId = recordId;
 	}
 
 	const animation =
@@ -195,69 +252,107 @@
 					</Dialog.CloseTrigger>
 				</header>
 
-				<Dialog.Description class="sr-only"
-					>Add a new API key to use on your Drago Daemon</Dialog.Description
-				>
+				<Dialog.Description class="sr-only">
+					Add a new API key to use on your Drago Daemon
+				</Dialog.Description>
 
 				<!-- Operation feedback -->
 				{#if operationMessage}
 					<div
-						class={`rounded p-2 ${operationSuccess ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'}`}
+						class={`rounded p-2 ${
+							operationSuccess ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'
+						}`}
 					>
 						{operationMessage}
 					</div>
 				{/if}
 
-				<form onsubmit={submitApiKeyData} class="space-y-4">
-					<!-- Key Name -->
-					<div>
-						<label for="key-name" class="mb-1 block text-sm font-medium text-neutral-300">
-							Name
-						</label>
-						<input
-							id="key-name"
-							name="name"
-							type="text"
-							placeholder="Cool API Key Name"
-							bind:value={keyName}
-							max="255"
-							required
-							class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
-						/>
-					</div>
+				{#if !apiKeyReturned}
+					<form onsubmit={submitApiKeyData} class="space-y-4">
+						<!-- Key Name -->
+						<div>
+							<label for="key-name" class="mb-1 block text-sm font-medium text-neutral-300">
+								Name
+							</label>
+							<input
+								id="key-name"
+								name="name"
+								type="text"
+								placeholder="Cool API Key Name"
+								bind:value={addKeyData.name}
+								max="255"
+								required
+								class="block w-full rounded-md border-neutral-600 bg-neutral-800 px-3 py-2 text-neutral-100 shadow-sm sm:text-sm"
+							/>
+						</div>
 
-					<div>
-						<label for="key-value" class="mb-1 block text-sm font-medium text-neutral-300">
-							Record Scope
-						</label>
-						<select
-							class="w-full rounded border border-neutral-600 bg-neutral-800 p-2"
-							bind:value={addKeyData}
-							placeholder="Select a DNS record to dynamically update"
-						>
-							{#each recordScopes as [zone, records]}
-								<optgroup label={zone.name}>
-									{#each records as record}
-										<option value={record.id}>{record.name} ({record.content})</option>
-									{/each}
-								</optgroup>
-							{/each}
-						</select>
-					</div>
+						<!-- Record Scope -->
+						<div>
+							<label for="key-scope" class="mb-1 block text-sm font-medium text-neutral-300">
+								Record Scope
+							</label>
+							<select
+								id="key-scope"
+								class={`w-full rounded border border-neutral-600 bg-neutral-800 p-2 ${
+									addKeyData.scope ? 'text-neutral-100' : 'text-neutral-500'
+								}`}
+								bind:value={addKeyData.scope}
+								onchange={handleRecordSelect}
+							>
+								<option value="" disabled selected>
+									Select a DNS record to dynamically update
+								</option>
+								{#each recordScopes as [zone, records]}
+									<optgroup label={zone.name}>
+										{#each records as record}
+											<option value={record.id} data-zone-id={zone.id} data-record-id={record.id}>
+												{record.name} ({record.content})
+											</option>
+										{/each}
+									</optgroup>
+								{/each}
+							</select>
+						</div>
 
-					<!-- Footer -->
-					<footer class="flex justify-end gap-2 pt-4">
-						<Dialog.CloseTrigger
-							class="btn preset-tonal"
-							onclick={() => {
-								addDialogOpen = false;
-							}}>Cancel</Dialog.CloseTrigger
+						<!-- Footer -->
+						<footer class="flex justify-end gap-2 pt-4">
+							<Dialog.CloseTrigger
+								class="btn preset-tonal"
+								onclick={() => {
+									addDialogOpen = false;
+								}}
+							>
+								Cancel
+							</Dialog.CloseTrigger>
+							<button type="submit" class="btn preset-filled-primary-500 font-semibold">
+								+ Create Key
+							</button>
+						</footer>
+					</form>
+				{:else}
+					<p>Save your API key somewhere safe. It will not be shown again.</p>
+					<div
+						class="flex items-center gap-2 rounded border border-neutral-800 bg-neutral-900 px-3 py-2"
+					>
+						<span class="truncate font-mono text-sm text-neutral-100">
+							{apiKeyReturned}
+						</span>
+
+						<button
+							type="button"
+							onclick={copyKey}
+							class="ml-auto inline-flex items-center gap-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-700"
 						>
-						<button type="submit" class="btn preset-filled-primary-500 font-semibold">
-							+ Create Key
+							{#if copied}
+								<Check class="h-3 w-3 text-emerald-400" />
+								<span>Copied</span>
+							{:else}
+								<Copy class="h-3 w-3" />
+								<span>Copy</span>
+							{/if}
 						</button>
-					</footer>
-				</form>
+					</div>
+				{/if}
 			</Dialog.Content>
 		</Dialog.Positioner>
 	</Portal>
@@ -291,7 +386,9 @@
 				<!-- Operation feedback -->
 				{#if operationMessage}
 					<div
-						class={`rounded p-2 ${operationSuccess ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'}`}
+						class={`rounded p-2 ${
+							operationSuccess ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'
+						}`}
 					>
 						{operationMessage}
 					</div>
@@ -306,8 +403,10 @@
 						class="btn preset-tonal"
 						onclick={() => {
 							deleteDialogOpen = false;
-						}}>Cancel</Dialog.CloseTrigger
+						}}
 					>
+						Cancel
+					</Dialog.CloseTrigger>
 					<button
 						type="button"
 						class="btn preset-filled-error-500"

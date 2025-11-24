@@ -378,7 +378,9 @@
 								bind:checked={proxied}
 								class="text-white-100 h-4 w-4 rounded border-neutral-600 bg-neutral-800 focus:ring-neutral-600"
 							/>
-							<label for="record-proxied" class="text-sm font-medium text-neutral-300"> Proxy </label>
+							<label for="record-proxied" class="text-sm font-medium text-neutral-300">
+								Proxy
+							</label>
 						</div>
 					</div>
 

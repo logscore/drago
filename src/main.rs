@@ -12,23 +12,27 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-use crate::db::{models::NewDnsAccessToken, *};
 use crate::{
-    db::schema::{dns_record, dns_token, dns_zone},
+    db::schema::{api_keys, dns_record, dns_token, dns_zone},
     lib::{
         auth::{AuthState, User},
-        encryption::decrypt,
-        encryption::encrypt,
+        encryption::{decrypt, encrypt},
+        types::*,
+        utils::{get_user_token, hash_raw_string},
     },
+};
+use crate::{
+    db::{models::NewDnsAccessToken, *},
+    lib::auth::generate_api_key,
 };
 
 #[tokio::main]
 async fn main() {
-    // 1. Initialize Auth State (Replace with your actual Better Auth URL)
+    // TODO: replace hard coded url with the env variable
     let auth_state = AuthState::new("http://localhost:5173");
 
     let cors = CorsLayer::new()
@@ -51,29 +55,24 @@ async fn main() {
         .route("/access_tokens", get(get_dns_access_tokens))
         .route("/access_token", post(add_dns_access_token))
         .route("/access_token", delete(delete_access_token))
+        .route("/api_keys", get(get_api_keys))
+        .route("/api_key", post(add_api_key))
+        .route("/api_key", delete(delete_api_key))
         .layer(cors)
-        .with_state(auth_state); // Inject state here
+        .with_state(auth_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
 async fn health() -> impl IntoResponse {
-    (StatusCode::OK, Json("Drago is running".to_string()))
+    (
+        StatusCode::OK,
+        Json("Drago is running. Let it rip.".to_string()),
+    )
 }
 
-// REFACTORED: Removed user_id from struct
-#[derive(Debug, Deserialize, Serialize)]
-struct AddDnsRecord {
-    zone_id: String,
-    zone_name: String,
-    record_type: String,
-    name: String,
-    content: String,
-    ttl: i32,
-    proxied: bool,
-}
-
+// DNS Record Controls
 async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
     let user_id = claims.sub;
     let zone_id = body.zone_id;
@@ -94,8 +93,6 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
         .filter(dns_record::record_name.eq(&subdomain))
         .first::<String>(conn)
         .optional();
-
-    // ... (Rest of DB logic remains the same, logic uses strict user_id from token)
 
     let existing_record_id = match result {
         Ok(v) => v,
@@ -279,19 +276,11 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
     (StatusCode::OK, Json(&zone_dns_data)).into_response()
 }
 
-// REFACTORED
-#[derive(Debug, Deserialize, Serialize)]
-struct DeleteDnsRecord {
-    // user_id: String, <-- DELETED
-    record_id: String,
-    zone_id: String,
-}
-
 async fn delete_dns_record(
-    User(claims): User, // AUTHENTICATED
+    User(claims): User,
     Query(params): Query<DeleteDnsRecord>,
 ) -> impl IntoResponse {
-    let user_id = claims.sub; // Secure ID
+    let user_id = claims.sub;
     let record_id = params.record_id;
     let zone_id = params.zone_id;
 
@@ -315,12 +304,8 @@ async fn delete_dns_record(
         .await
     {
         Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json("DNS provider request failed"),
-            )
-                .into_response();
+        Err(err) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
         }
     };
 
@@ -330,7 +315,9 @@ async fn delete_dns_record(
 
     let deleted_token = match response {
         Ok(r) => r.result,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response(),
+        Err(err) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
+        }
     };
 
     let result = conn.transaction(|conn| {
@@ -346,10 +333,11 @@ async fn delete_dns_record(
 
     match result {
         Ok(_) => (StatusCode::OK, "Deleted DNS record from account").into_response(),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }
 
+// DNS Token Controls
 async fn get_dns_access_tokens(
     User(claims): User, // AUTHENTICATED
                         // Params removed
@@ -370,17 +358,10 @@ async fn get_dns_access_tokens(
                 created_on,
             })
             .collect::<Vec<_>>(),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };
 
     (StatusCode::OK, Json(&tokens)).into_response()
-}
-
-// REFACTORED
-#[derive(Debug, Deserialize, Serialize)]
-struct AddAccessToken {
-    name: String,
-    token: String,
 }
 
 async fn add_dns_access_token(
@@ -395,8 +376,8 @@ async fn add_dns_access_token(
 
     let encrypted = match encrypt(&dns_token_str) {
         Ok(enc) => enc,
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json("Encryption error")).into_response();
+        Err(err) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response();
         }
     };
 
@@ -418,24 +399,19 @@ async fn add_dns_access_token(
 
     match result {
         Ok(_) => (StatusCode::OK, Json("Added DNS token to account")).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json("Failed to add token"),
-        )
-            .into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
     }
 }
 
 async fn delete_access_token(
-    User(claims): User, // AUTHENTICATED
+    User(claims): User,
     Query(params): Query<DeleteAccessToken>,
 ) -> impl IntoResponse {
     let dns_token_id = params.token_id;
-    let user_id = claims.sub; // Secure ID
+    let user_id = claims.sub;
     let mut conn = establish_connection();
 
     let result = conn.transaction(|conn| {
-        // SECURITY: Ensure the token belongs to the user trying to delete it
         diesel::delete(
             dns_token::table
                 .filter(dns_token::id.eq(dns_token_id))
@@ -446,11 +422,65 @@ async fn delete_access_token(
     });
 
     match result {
-        Ok(_) => (StatusCode::OK, "Deleted DNS token from account").into_response(),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+        Ok(_) => (StatusCode::OK, Json("Deleted DNS token from account")).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
     }
 }
 
+// API Key Controls
+async fn get_api_keys(User(claims): User) -> impl IntoResponse {
+    let user_id = claims.sub;
+    (StatusCode::OK, "Not implemented yet")
+}
+
+async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl IntoResponse {
+    let user_id = &claims.sub;
+    let key_name = &body.name;
+    let key_scope = &body.scope;
+
+    dbg!(&body);
+
+    let mut conn = establish_connection();
+
+    // Create an api key, hash it
+    let api_key = generate_api_key();
+
+    let hashed_key = match hash_raw_string(&api_key) {
+        Ok(hashed_key) => hashed_key,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(format!("Failed to hash key: {}", err.to_string())),
+            )
+                .into_response();
+        }
+    };
+
+    // Save the name, hash, scope id and user id to the database
+    match diesel::insert_into(api_keys::table)
+        .values((
+            api_keys::id.eq(Uuid::now_v7().to_string()),
+            api_keys::name.eq(key_name),
+            api_keys::key_hash.eq(hashed_key),
+            api_keys::dns_record_id.eq(key_scope),
+            api_keys::user_id.eq(user_id),
+        ))
+        .execute(&mut conn)
+    {
+        // Return the api key in the response body
+        Ok(_) => (StatusCode::CREATED, Json(&api_key)).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
+    }
+
+    // Frontend recieves the response value, and display it to the user to copy
+}
+
+async fn delete_api_key(User(claims): User) -> impl IntoResponse {
+    (StatusCode::OK, "Not implemented yet")
+}
+
+// Helper functions
+// TODO: Move these to a utils file
 async fn initialize_zones(
     conn: &mut MysqlConnection,
     curr_user_id: &String,
@@ -569,113 +599,4 @@ async fn fetch_zone_records(
             }
         }
     }
-}
-
-fn get_user_token(
-    conn: &mut MysqlConnection,
-    user_id: &String, // Use &str instead of &String for better flexibility
-) -> Result<String, String> {
-    // Simplified to just return the decrypted token
-    // Get the user's dns access token from our db
-    let token_data = dns_token::table
-        .filter(dns_token::user_id.eq(user_id))
-        .select((dns_token::token_encrypted, dns_token::nonce, dns_token::tag))
-        .first::<(Vec<u8>, Vec<u8>, Vec<u8>)>(conn)
-        .optional();
-
-    // Handle DB error or Missing Token
-    let (ciphertext, nonce, tag) = match token_data {
-        Ok(Some(data)) => data,
-        Ok(None) => {
-            return Err("No token found for account".to_string());
-        }
-        Err(e) => {
-            eprintln!("Token Query failed: {:?}", e);
-            return Err(format!("Database error: {}", e));
-        }
-    };
-
-    // Decrypt the token
-    let decrypted_token = decrypt(&nonce, &ciphertext, &tag).map_err(|e| {
-        eprintln!("Decryption failed: {:?}", e);
-        format!("Decryption error: {}", e)
-    })?;
-
-    Ok(decrypted_token)
-}
-
-// Types (duplicate definitions removed - see above for struct definitions)
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DeleteAccessToken {
-    token_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DnsRecord {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub record_type: String,
-    pub content: String,
-    pub ttl: i32,
-    pub proxied: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DeletedDnsRecord {
-    id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Zone {
-    id: String,
-    name: String,
-    status: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DnsAccessToken {
-    name: String,
-    id: String,
-    created_on: NaiveDateTime,
-}
-// From Cloudflare
-#[derive(Debug, Deserialize, Serialize)]
-struct DnsZonesResponse {
-    result: Vec<Zone>,
-    success: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct CreateRecordResponse {
-    result: DnsRecord,
-    success: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DeleteRecordResponse {
-    result: DeletedDnsRecord,
-    success: bool,
-}
-
-#[derive(Serialize)]
-struct DnsRecordPayload<'a> {
-    r#type: &'a String,
-    name: &'a String,
-    content: &'a String,
-    ttl: &'a i32,
-    proxied: &'a bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct DnsRecordsResponse {
-    result: Vec<DnsRecord>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ApiResponse<T> {
-    success: bool,
-    message: String,
-    data: T,
 }

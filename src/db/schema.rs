@@ -22,15 +22,19 @@ diesel::table! {
 
 diesel::table! {
     api_keys (id) {
-        #[max_length = 255]
+        #[max_length = 36]
         id -> Varchar,
         #[max_length = 36]
         user_id -> Varchar,
-        #[max_length = 64]
+        #[max_length = 97]
         key_hash -> Varchar,
         last_used -> Nullable<Timestamp>,
         created_on -> Timestamp,
         updated_on -> Timestamp,
+        #[max_length = 255]
+        dns_record_id -> Varchar,
+        #[max_length = 255]
+        name -> Varchar,
     }
 }
 
@@ -88,6 +92,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    jwks (id) {
+        #[max_length = 36]
+        id -> Varchar,
+        public_key -> Text,
+        private_key -> Text,
+        created_at -> Timestamp,
+        expires_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
     session (id) {
         #[max_length = 36]
         id -> Varchar,
@@ -107,7 +122,8 @@ diesel::table! {
     user (id) {
         #[max_length = 36]
         id -> Varchar,
-        name -> Text,
+        #[max_length = 255]
+        name -> Varchar,
         #[max_length = 255]
         email -> Varchar,
         email_verified -> Bool,
@@ -121,7 +137,8 @@ diesel::table! {
     verification (id) {
         #[max_length = 36]
         id -> Varchar,
-        identifier -> Text,
+        #[max_length = 255]
+        identifier -> Varchar,
         value -> Text,
         expires_at -> Timestamp,
         created_at -> Timestamp,
@@ -130,7 +147,7 @@ diesel::table! {
 }
 
 diesel::joinable!(account -> user (user_id));
-diesel::joinable!(api_keys -> dns_record (id));
+diesel::joinable!(api_keys -> dns_record (dns_record_id));
 diesel::joinable!(api_keys -> user (user_id));
 diesel::joinable!(dns_record -> dns_zone (zone_id));
 diesel::joinable!(dns_record -> user (user_id));
@@ -145,6 +162,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     dns_record,
     dns_token,
     dns_zone,
+    jwks,
     session,
     user,
     verification,

@@ -7,3 +7,8 @@ Goals:
 - Make it small
 - Make it simple
 - Make it secure
+
+Data sent:
+  API key
+  IP address
+  TImestamp of when sent

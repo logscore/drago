@@ -3,6 +3,7 @@ use axum::{
     http::{StatusCode, header::AUTHORIZATION, request::Parts},
 };
 use jsonwebtoken::decode_header;
+use rand::{Rng, distr::Alphanumeric};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,6 +12,8 @@ use tokio::sync::RwLock;
 
 // Base64 engine for URL-safe decoding
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+const VERSION: &str = "1";
 
 // 1. The Claims struct (What is inside the token)
 #[derive(Debug, Deserialize, Clone)]
@@ -92,7 +95,7 @@ impl AuthState {
                     let key_array: [u8; 32] = key_bytes[..32]
                         .try_into()
                         .map_err(|_| "Invalid key length")?;
-                    
+
                     if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&key_array) {
                         store.insert(key.kid.clone(), verifying_key);
                     }
@@ -138,7 +141,7 @@ where
         let kid = header
             .kid
             .ok_or((StatusCode::UNAUTHORIZED, "Missing kid".into()))?;
-        
+
         let verifying_key = auth_state
             .get_key(&kid)
             .await
@@ -155,9 +158,12 @@ where
         let signature_b64 = parts[2];
 
         // Decode signature
-        let signature_bytes = URL_SAFE_NO_PAD
-            .decode(signature_b64)
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "Failed to decode signature".into()))?;
+        let signature_bytes = URL_SAFE_NO_PAD.decode(signature_b64).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "Failed to decode signature".into(),
+            )
+        })?;
 
         if signature_bytes.len() != 64 {
             return Err((StatusCode::UNAUTHORIZED, "Invalid signature length".into()));
@@ -172,13 +178,18 @@ where
         let message = format!("{}.{}", header_b64, payload_b64);
         verifying_key
             .verify_strict(message.as_bytes(), &signature)
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "Signature verification failed".into()))?;
+            .map_err(|_| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Signature verification failed".into(),
+                )
+            })?;
 
         // Decode payload
         let payload_bytes = URL_SAFE_NO_PAD
             .decode(payload_b64)
             .map_err(|_| (StatusCode::UNAUTHORIZED, "Failed to decode payload".into()))?;
-        
+
         let payload: Value = serde_json::from_slice(&payload_bytes)
             .map_err(|_| (StatusCode::UNAUTHORIZED, "Failed to parse payload".into()))?;
 
@@ -201,4 +212,16 @@ where
     }
 }
 
-// FromRef is automatically implemented for Clone types, so we don't need to implement it manually
+pub fn generate_api_key() -> String {
+    let rand_chars: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+
+    let api_key_string = format!("dgo_{}_{}", VERSION, rand_chars);
+
+    dbg!(&api_key_string);
+
+    api_key_string
+}
