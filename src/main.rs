@@ -1,6 +1,7 @@
 mod db;
 mod lib;
 
+use argon2::Params;
 use axum::{
     Json, Router,
     extract::Query,
@@ -311,8 +312,6 @@ async fn delete_dns_record(
 
     let response = resp.json::<DeleteRecordResponse>().await;
 
-    dbg!(&response);
-
     let deleted_token = match response {
         Ok(r) => r.result,
         Err(err) => {
@@ -430,15 +429,49 @@ async fn delete_access_token(
 // API Key Controls
 async fn get_api_keys(User(claims): User) -> impl IntoResponse {
     let user_id = claims.sub;
-    (StatusCode::OK, "Not implemented yet")
+
+    let mut conn: MysqlConnection = establish_connection();
+
+    match api_keys::table
+        .filter(api_keys::user_id.eq(&user_id))
+        .inner_join(dns_record::table.on(api_keys::dns_record_id.eq(dns_record::id)))
+        .select((
+            api_keys::id,
+            api_keys::created_on,
+            api_keys::last_used,
+            api_keys::name,
+            dns_record::record_name,
+        ))
+        .load::<(String, NaiveDateTime, Option<NaiveDateTime>, String, String)>(&mut conn)
+    {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(
+                response
+                    .into_iter()
+                    .map(|(id, created_on, last_used, name, record_name)| ApiKey {
+                        id,
+                        created_on,
+                        last_used,
+                        name,
+                        record_name,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(format!("Error: {}", err)),
+        )
+            .into_response(),
+    }
 }
 
 async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl IntoResponse {
     let user_id = &claims.sub;
     let key_name = &body.name;
     let key_scope = &body.scope;
-
-    dbg!(&body);
 
     let mut conn = establish_connection();
 
@@ -457,17 +490,20 @@ async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl In
     };
 
     // Save the name, hash, scope id and user id to the database
-    match diesel::insert_into(api_keys::table)
-        .values((
-            api_keys::id.eq(Uuid::now_v7().to_string()),
-            api_keys::name.eq(key_name),
-            api_keys::key_hash.eq(hashed_key),
-            api_keys::dns_record_id.eq(key_scope),
-            api_keys::user_id.eq(user_id),
-        ))
-        .execute(&mut conn)
-    {
-        // Return the api key in the response body
+    let result = conn.transaction(|conn| {
+        diesel::insert_into(api_keys::table)
+            .values((
+                api_keys::id.eq(Uuid::now_v7().to_string()),
+                api_keys::name.eq(key_name),
+                api_keys::key_hash.eq(hashed_key),
+                api_keys::dns_record_id.eq(key_scope),
+                api_keys::user_id.eq(user_id),
+            ))
+            .execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    });
+
+    match result {
         Ok(_) => (StatusCode::CREATED, Json(&api_key)).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
     }
@@ -475,8 +511,28 @@ async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl In
     // Frontend recieves the response value, and display it to the user to copy
 }
 
-async fn delete_api_key(User(claims): User) -> impl IntoResponse {
-    (StatusCode::OK, "Not implemented yet")
+async fn delete_api_key(
+    User(claims): User,
+    Query(params): Query<DeleteApiKeyParams>,
+) -> impl IntoResponse {
+    let api_key_id = params.key_id;
+    let user_id = claims.sub;
+    let mut conn = establish_connection();
+
+    let result = conn.transaction(|conn| {
+        diesel::delete(
+            api_keys::table
+                .filter(api_keys::id.eq(api_key_id))
+                .filter(api_keys::user_id.eq(user_id)),
+        )
+        .execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
+    });
+
+    match result {
+        Ok(_) => (StatusCode::OK, Json("API key deleted from account")).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
+    }
 }
 
 // Helper functions

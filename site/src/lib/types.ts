@@ -24,7 +24,8 @@ export interface ApiKey {
 	id: string;
 	name: string;
 	created_on: string;
-	scope: string;
+	last_used: string | null;
+	record_name: string;
 }
 
 export interface AddRecordData {

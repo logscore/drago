@@ -59,6 +59,20 @@ pub struct DnsAccessToken {
     pub created_on: NaiveDateTime,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ApiKey {
+    pub id: String,
+    pub created_on: NaiveDateTime,
+    pub last_used: Option<NaiveDateTime>,
+    pub name: String,
+    pub record_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DeleteApiKeyParams {
+    pub key_id: String,
+}
+
 // From Cloudflare
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DnsZonesResponse {

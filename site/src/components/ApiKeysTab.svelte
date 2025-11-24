@@ -46,17 +46,12 @@
 			if (!response.ok) {
 				throw new Error('Network response was not ok');
 			}
-			return response.json();
+			return await response.json();
 		},
 		enabled: !!jwtData
 	}));
 
-	async function deleteApiKey(keyId: string) {
-		console.log('Deleting API key.', keyId);
-		// TODO: wire this up to your delete endpoint and invalidate the query
-	}
-
-	const addTokenMutation = createMutation(() => ({
+	const addKeyMutation = createMutation(() => ({
 		mutationFn: async (data: { name: string; scope: string; zoneId: string; recordId: string }) => {
 			const response = await fetch('http://127.0.0.1:8080/api_key', {
 				method: 'POST',
@@ -90,10 +85,42 @@
 		}
 	}));
 
+	const deleteKeyMutation = createMutation(() => ({
+		mutationFn: async (data: { key_id: string }) => {
+			const response = await fetch(`http://127.0.0.1:8080/api_key?key_id=${data.key_id}`, {
+				method: 'DELETE',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${jwtData}`
+				}
+			});
+
+			if (!response.ok) {
+				throw new Error('Failed to add token');
+			}
+
+			return response.json();
+		},
+		onSuccess: () => {
+			operationSuccess = true;
+			operationMessage = 'API key deleted successfully.';
+			// reset form
+			addKeyData.name = '';
+			addKeyData.scope = '';
+			addKeyData.zoneId = '';
+			addKeyData.recordId = '';
+			apiKeysQuery.refetch();
+		},
+		onError: (error: unknown) => {
+			operationSuccess = false;
+			operationMessage = error instanceof Error ? error.message : 'Failed to add token.';
+		}
+	}));
+
 	function submitApiKeyData(event: Event) {
 		event.preventDefault();
 
-		addTokenMutation.mutate({
+		addKeyMutation.mutate({
 			name: addKeyData.name,
 			scope: addKeyData.scope,
 			zoneId: addKeyData.zoneId,
@@ -179,9 +206,10 @@
 				</p>
 			{:else if apiKeysQuery.isSuccess && apiKeysQuery.data.length > 0}
 				<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">
-					<div class="col-span-4">NAME</div>
-					<div class="col-span-3">SCOPE</div>
-					<div class="col-span-3">CREATED DATE</div>
+					<div class="col-span-3">NAME</div>
+					<div class="col-span-3">DNS RECORD MANAGED</div>
+					<div class="col-span-2">CREATED DATE</div>
+					<div class="col-span-2">LAST USED</div>
 					<div class="col-span-2 pr-2 text-right">ACTIONS</div>
 				</div>
 				{#each apiKeysQuery.data as apiKey}
@@ -189,7 +217,7 @@
 						class="mb-2 grid grid-cols-12 rounded border border-neutral-800 bg-neutral-900 px-4 py-3"
 					>
 						<!-- API Key Field -->
-						<div class="col-span-4 truncate break-all">
+						<div class="col-span-3 truncate break-all">
 							<span class="font-mono text-sm">
 								{apiKey.name}
 							</span>
@@ -197,13 +225,23 @@
 
 						<div class="col-span-3 truncate break-all">
 							<span class="font-mono text-sm">
-								{apiKey.scope}
+								{apiKey.record_name}
 							</span>
 						</div>
 
-						<div class="col-span-3 truncate break-all">
+						<div class="col-span-2 truncate break-all">
 							<span class="font-mono text-sm">
 								{apiKey.created_on}
+							</span>
+						</div>
+
+						<div class="col-span-2 truncate break-all">
+							<span class="font-mono text-sm">
+								{#if apiKey.last_used}
+									{apiKey.last_used}
+								{:else}
+									–
+								{/if}
 							</span>
 						</div>
 
@@ -298,6 +336,7 @@
 								}`}
 								bind:value={addKeyData.scope}
 								onchange={handleRecordSelect}
+								required
 							>
 								<option value="" disabled selected>
 									Select a DNS record to dynamically update
@@ -352,6 +391,16 @@
 							{/if}
 						</button>
 					</div>
+					<footer class="flex justify-end gap-2 pt-4">
+						<Dialog.CloseTrigger
+							class="btn preset-tonal"
+							onclick={() => {
+								addDialogOpen = false;
+							}}
+						>
+							Close
+						</Dialog.CloseTrigger>
+					</footer>
 				{/if}
 			</Dialog.Content>
 		</Dialog.Positioner>
@@ -410,7 +459,10 @@
 					<button
 						type="button"
 						class="btn preset-filled-error-500"
-						onclick={() => deleteApiKey(currentApiKeyId)}
+						onclick={() =>
+							deleteKeyMutation.mutate({
+								key_id: currentApiKeyId
+							})}
 					>
 						Delete
 					</button>

@@ -221,7 +221,5 @@ pub fn generate_api_key() -> String {
 
     let api_key_string = format!("dgo_{}_{}", VERSION, rand_chars);
 
-    dbg!(&api_key_string);
-
     api_key_string
 }
