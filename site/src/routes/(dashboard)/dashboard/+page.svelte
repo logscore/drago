@@ -14,7 +14,6 @@
 	$effect(() => {
 		async function fetchJWT() {
 			const { data, error } = await authClient.token();
-			console.log(data);
 			if (error) {
 				console.error(error.message);
 			}
@@ -39,7 +38,7 @@
 			if (!response.ok) {
 				throw new Error('Network response was not ok');
 			}
-			return response.json();
+			return await response.json();
 		},
 		enabled: !!jwtData
 	}));

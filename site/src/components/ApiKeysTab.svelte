@@ -33,7 +33,7 @@
 	let operationSuccess = $state<boolean>(false);
 
 	const apiKeysQuery = createQuery<ApiKey[]>(() => ({
-		queryKey: ['access_keys', jwtData],
+		queryKey: ['access_tokens', jwtData],
 		queryFn: async () => {
 			if (!jwtData) {
 				throw new Error('User not signed in');
@@ -66,7 +66,7 @@
 				throw new Error('Failed to add token');
 			}
 
-			return response.json();
+			return await response.json();
 		},
 		onSuccess: (data) => {
 			apiKeyReturned = data;
@@ -99,7 +99,7 @@
 				throw new Error('Failed to add token');
 			}
 
-			return response.json();
+			return await response.json();
 		},
 		onSuccess: () => {
 			operationSuccess = true;
@@ -110,6 +110,9 @@
 			addKeyData.zoneId = '';
 			addKeyData.recordId = '';
 			apiKeysQuery.refetch();
+			setTimeout(() => {
+				deleteDialogOpen = false;
+			}, 3000);
 		},
 		onError: (error: unknown) => {
 			operationSuccess = false;
@@ -443,29 +446,50 @@
 					</div>
 				{/if}
 
-				<Dialog.Description>
-					Are you sure you want to delete this API key? This action cannot be undone.
-				</Dialog.Description>
+				{#if deleteKeyMutation.isSuccess}
+					<div class="flex flex-col items-center justify-center py-4">
+						<div class="mb-4 rounded-full bg-green-800 p-3">
+							<Check class="size-4 text-green-200" />
+						</div>
+
+						<p class="text-center text-green-200">API key has been successfully deleted.</p>
+					</div>
+				{:else}
+					<Dialog.Description>
+						Are you sure you want to delete this API key? This action cannot be undone.
+					</Dialog.Description>
+				{/if}
 
 				<footer class="flex justify-end gap-2">
-					<Dialog.CloseTrigger
-						class="btn preset-tonal"
-						onclick={() => {
-							deleteDialogOpen = false;
-						}}
-					>
-						Cancel
-					</Dialog.CloseTrigger>
-					<button
-						type="button"
-						class="btn preset-filled-error-500"
-						onclick={() =>
-							deleteKeyMutation.mutate({
-								key_id: currentApiKeyId
-							})}
-					>
-						Delete
-					</button>
+					{#if deleteKeyMutation.isSuccess}
+						<Dialog.CloseTrigger
+							class="btn preset-filled-primary-500"
+							onclick={() => {
+								deleteDialogOpen = false;
+							}}
+						>
+							Close
+						</Dialog.CloseTrigger>
+					{:else}
+						<Dialog.CloseTrigger
+							class="btn preset-tonal"
+							onclick={() => {
+								deleteDialogOpen = false;
+							}}
+						>
+							Cancel
+						</Dialog.CloseTrigger>
+						<button
+							type="button"
+							class="btn preset-filled-error-500"
+							onclick={() =>
+								deleteKeyMutation.mutate({
+									key_id: currentApiKeyId
+								})}
+						>
+							Delete
+						</button>
+					{/if}
 				</footer>
 			</Dialog.Content>
 		</Dialog.Positioner>

@@ -46,7 +46,7 @@
 			if (!response.ok) {
 				throw new Error('Network response was not ok');
 			}
-			return response.json();
+			return await response.json();
 		},
 		enabled: !!jwtData
 	}));
@@ -309,6 +309,7 @@
 			>
 				<header class="flex items-center justify-between">
 					<Dialog.Title class="text-lg font-bold text-red-500">Delete Access Token</Dialog.Title>
+
 					<Dialog.CloseTrigger
 						class="btn-icon hover:preset-tonal"
 						onclick={() => {
