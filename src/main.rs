@@ -1,7 +1,6 @@
 mod db;
 mod lib;
 
-use argon2::Params;
 use axum::{
     Json, Router,
     extract::Query,
@@ -202,7 +201,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
         let (token_id, ciphertext, nonce, tag) = match token_data {
             Ok(Some(data)) => data,
             Ok(None) => {
-                return (StatusCode::NOT_FOUND, "No DNS Token found for user").into_response();
+                return (StatusCode::NOT_FOUND, "No DNS Token found").into_response();
             }
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
         };

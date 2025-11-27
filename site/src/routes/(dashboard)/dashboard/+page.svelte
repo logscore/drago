@@ -7,7 +7,8 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import type { ZoneRecordData } from '$lib/types';
 
-	let tab_value = $state('domains');
+	let tab = $state<string>('domains');
+	let missingToken = $state<boolean>(false);
 
 	let jwtData = $state<string>('');
 
@@ -30,15 +31,24 @@
 			if (!jwtData) {
 				throw new Error('User not signed in');
 			}
+
+			missingToken = false;
+
 			const response = await fetch(`http://127.0.0.1:8080/records`, {
 				headers: {
 					Authorization: `Bearer ${jwtData}`
 				}
 			});
+
 			if (!response.ok) {
+				if (response.status === 404) {
+					missingToken = true;
+					throw new Error('Missing DNS access token');
+				}
+
 				throw new Error('Network response was not ok');
 			}
-			return await response.json();
+			return response.json();
 		},
 		enabled: !!jwtData
 	}));
@@ -46,7 +56,7 @@
 
 <div class="mx-auto min-h-screen max-w-7xl p-4">
 	<main class="w-full">
-		<Tabs value={tab_value} onValueChange={(details) => (tab_value = details.value)}>
+		<Tabs value={tab} onValueChange={(details) => (tab = details.value)}>
 			<Tabs.List class="mb-6 flex w-full gap-2 border-b pb-2">
 				<Tabs.Trigger value="domains" class="px-3 py-2 hover:bg-neutral-800">Domains</Tabs.Trigger>
 				<Tabs.Trigger value="api keys" class="px-3 py-2 hover:bg-neutral-800">API Keys</Tabs.Trigger
@@ -57,11 +67,11 @@
 			</Tabs.List>
 
 			<Tabs.Content value="domains" class="w-full">
-				<DomainsTab {jwtData} />
+				<DomainsTab {jwtData} {recordsQuery} bind:tab {missingToken} />
 			</Tabs.Content>
 
 			<Tabs.Content value="api keys" class="w-full">
-				<ApiKeysTab {jwtData} recordScopes={recordsQuery.data!} />
+				<ApiKeysTab {jwtData} {recordsQuery} bind:tab {missingToken} />
 			</Tabs.Content>
 
 			<Tabs.Content value="settings" class="w-full">

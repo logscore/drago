@@ -2,14 +2,16 @@
 	import type { ApiKey, ZoneRecordData } from '$lib/types';
 	import { Check, Copy, XIcon } from '@lucide/svelte';
 	import { Dialog, Portal } from '@skeletonlabs/skeleton-svelte';
-	import { createMutation, createQuery } from '@tanstack/svelte-query';
+	import { createMutation, createQuery, type CreateQueryResult } from '@tanstack/svelte-query';
 
 	interface Props {
 		jwtData: string;
-		recordScopes: ZoneRecordData;
+		recordsQuery: CreateQueryResult<ZoneRecordData>;
+		tab: string;
+		missingToken: boolean;
 	}
 
-	let { jwtData, recordScopes }: Props = $props();
+	let { jwtData, recordsQuery, tab = $bindable(), missingToken }: Props = $props();
 
 	// Single source of truth for the "add key" form
 	let addKeyData = $state({
@@ -181,6 +183,10 @@
 		addKeyData.recordId = recordId;
 	}
 
+	function handleGoToSettings() {
+		tab = 'settings';
+	}
+
 	const animation =
 		'transition transition-discrete opacity-0 translate-y-[100px] starting:data-[state=open]:opacity-0 starting:data-[state=open]:translate-y-[100px] data-[state=open]:opacity-100 data-[state=open]:translate-y-0';
 </script>
@@ -192,79 +198,111 @@
 
 <div class="w-full rounded">
 	<div class="mb-8 space-y-8">
-		<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
-			<div class="mb-4 flex items-center justify-between border-b border-neutral-800 pb-2">
-				<div>
-					<h2 class="text-2xl font-bold">API Keys</h2>
-				</div>
-				<button class="preset-filled-500 btn font-semibold" onclick={openAddDialog}>
-					+ Create Key
+		{#if recordsQuery.isPending}
+			<p class="p-4 text-neutral-500">Loading records...</p>
+		{:else if missingToken}
+			<div class="rounded border border-amber-500/40 bg-amber-500/5 p-4 text-amber-100">
+				<p class="mb-2 font-semibold">Missing DNS access token!</p>
+				<p class="mb-4 text-sm text-amber-200/80">
+					Head over to the Settings tab and add a DNS access token so Drago can sync your zones.
+				</p>
+				<button
+					type="button"
+					class="preset-filled-500 btn font-semibold"
+					onclick={() => {
+						tab = 'settings';
+					}}
+				>
+					Go to Settings
 				</button>
 			</div>
-			{#if apiKeysQuery.isPending}
-				<p class="p-4 text-neutral-500">Loading keys...</p>
-			{:else if apiKeysQuery.isError}
-				<p class="p-4 text-red-500">
-					Error loading keys: {apiKeysQuery.error || 'Unknown error'}
-				</p>
-			{:else if apiKeysQuery.isSuccess && apiKeysQuery.data.length > 0}
-				<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">
-					<div class="col-span-3">NAME</div>
-					<div class="col-span-3">DNS RECORD MANAGED</div>
-					<div class="col-span-2">CREATED DATE</div>
-					<div class="col-span-2">LAST USED</div>
-					<div class="col-span-2 pr-2 text-right">ACTIONS</div>
-				</div>
-				{#each apiKeysQuery.data as apiKey}
-					<div
-						class="mb-2 grid grid-cols-12 rounded border border-neutral-800 bg-neutral-900 px-4 py-3"
-					>
-						<!-- API Key Field -->
-						<div class="col-span-3 truncate break-all">
-							<span class="font-mono text-sm">
-								{apiKey.name}
-							</span>
-						</div>
-
-						<div class="col-span-3 truncate break-all">
-							<span class="font-mono text-sm">
-								{apiKey.record_name}
-							</span>
-						</div>
-
-						<div class="col-span-2 truncate break-all">
-							<span class="font-mono text-sm">
-								{apiKey.created_on}
-							</span>
-						</div>
-
-						<div class="col-span-2 truncate break-all">
-							<span class="font-mono text-sm">
-								{#if apiKey.last_used}
-									{apiKey.last_used}
-								{:else}
-									–
-								{/if}
-							</span>
-						</div>
-
-						<!-- Actions -->
-						<div class="col-span-2 flex justify-end">
-							<button
-								onclick={() => openDeleteDialog(apiKey.id)}
-								class="btn preset-filled-error-500 btn-sm"
-							>
-								Delete
-							</button>
-						</div>
+		{:else}
+			<div class="rounded border border-neutral-800 bg-neutral-900 p-4">
+				<div class="mb-4 flex items-center justify-between border-b border-neutral-800 pb-2">
+					<div>
+						<h2 class="text-2xl font-bold">API Keys</h2>
 					</div>
-				{/each}
-			{:else}
-				<div class="w-full rounded p-4">
-					<p>No API keys yet. Click "Add Key" to get started</p>
+					<button class="preset-filled-500 btn font-semibold" onclick={openAddDialog}>
+						+ Create Key
+					</button>
 				</div>
-			{/if}
-		</div>
+				{#if apiKeysQuery.isError}
+					<p class="p-4 text-red-500">
+						Error loading keys: {apiKeysQuery.error || 'Unknown error'}
+					</p>
+				{:else if missingToken}
+					<div class="rounded border border-amber-500/40 bg-amber-500/5 p-4 text-amber-100">
+						<p class="mb-2 font-semibold">Missing DNS access token!</p>
+						<p class="mb-4 text-sm text-amber-200/80">
+							Head over to the Settings tab and add a DNS access token so Drago can sync your zones.
+						</p>
+						<button
+							type="button"
+							class="preset-filled-500 btn font-semibold"
+							onclick={handleGoToSettings}
+						>
+							Go to Settings
+						</button>
+					</div>
+				{:else if apiKeysQuery.isSuccess && apiKeysQuery.data.length > 0}
+					<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">
+						<div class="col-span-3">NAME</div>
+						<div class="col-span-3">DNS RECORD MANAGED</div>
+						<div class="col-span-2">CREATED DATE</div>
+						<div class="col-span-2">LAST USED</div>
+						<div class="col-span-2 pr-2 text-right">ACTIONS</div>
+					</div>
+					{#each apiKeysQuery.data as apiKey}
+						<div
+							class="mb-2 grid grid-cols-12 rounded border border-neutral-800 bg-neutral-900 px-4 py-3"
+						>
+							<!-- API Key Field -->
+							<div class="col-span-3 truncate break-all">
+								<span class="font-mono text-sm">
+									{apiKey.name}
+								</span>
+							</div>
+
+							<div class="col-span-3 truncate break-all">
+								<span class="font-mono text-sm">
+									{apiKey.record_name}
+								</span>
+							</div>
+
+							<div class="col-span-2 truncate break-all">
+								<span class="font-mono text-sm">
+									{apiKey.created_on}
+								</span>
+							</div>
+
+							<div class="col-span-2 truncate break-all">
+								<span class="font-mono text-sm">
+									{#if apiKey.last_used}
+										{apiKey.last_used}
+									{:else}
+										–
+									{/if}
+								</span>
+							</div>
+
+							<!-- Actions -->
+							<div class="col-span-2 flex justify-end">
+								<button
+									onclick={() => openDeleteDialog(apiKey.id)}
+									class="btn preset-filled-error-500 btn-sm"
+								>
+									Delete
+								</button>
+							</div>
+						</div>
+					{/each}
+				{:else}
+					<div class="w-full rounded p-4">
+						<p>No API keys yet. Click "Add Key" to get started</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -344,7 +382,7 @@
 								<option value="" disabled selected>
 									Select a DNS record to dynamically update
 								</option>
-								{#each recordScopes as [zone, records]}
+								{#each recordsQuery.data as [zone, records]}
 									<optgroup label={zone.name}>
 										{#each records as record}
 											<option value={record.id} data-zone-id={zone.id} data-record-id={record.id}>

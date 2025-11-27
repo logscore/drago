@@ -5,6 +5,9 @@
 	import { Dialog, Portal } from '@skeletonlabs/skeleton-svelte';
 	import type { AccessToken } from '$lib/types';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { useQueryClient } from '@tanstack/svelte-query';
+
+	const queryClient = useQueryClient();
 
 	interface Props {
 		jwtData: string;
@@ -52,13 +55,6 @@
 	}));
 
 	async function addAccessToken() {
-		// Form validation
-		if (!tokenName) {
-			operationMessage = 'Please enter a token name';
-			operationSuccess = false;
-			return;
-		}
-
 		try {
 			const response = await fetch('http://127.0.0.1:8080/access_token', {
 				method: 'POST',
@@ -87,7 +83,7 @@
 			addDialogOpen = false;
 
 			// Refresh records
-			accessTokensQuery.refetch();
+			queryClient.invalidateQueries();
 		} catch (error) {
 			console.error('Error adding access token:', error);
 			operationMessage = `Error adding access token: ${error}`;
@@ -116,7 +112,7 @@
 			deleteDialogOpen = false;
 
 			// Refresh records
-			accessTokensQuery.refetch();
+			queryClient.invalidateQueries();
 		} catch (error) {
 			console.error('Error deleting access token:', error);
 			operationMessage = `Error deleting access token: ${error}`;
@@ -160,7 +156,7 @@
 				<p class="p-4 text-neutral-500">Loading records...</p>
 			{:else if accessTokensQuery.isError}
 				<p class="p-4 text-red-500">
-					Error loading records: {accessTokensQuery.error || 'Unknown error'}
+					Error loading tokens: {accessTokensQuery.error || 'Unknown error'}
 				</p>
 			{:else if accessTokensQuery.isSuccess && accessTokensQuery.data.length > 0}
 				<div class="grid grid-cols-12 gap-4 px-2 text-xs font-bold text-neutral-400">

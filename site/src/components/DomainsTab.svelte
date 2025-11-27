@@ -2,13 +2,16 @@
 	import type { ZoneRecordData } from '$lib/types';
 	import { XIcon } from '@lucide/svelte';
 	import { Dialog, Portal } from '@skeletonlabs/skeleton-svelte';
-	import { createQuery } from '@tanstack/svelte-query';
+	import type { CreateQueryResult } from '@tanstack/svelte-query';
 
 	interface Props {
 		jwtData: string;
+		recordsQuery: CreateQueryResult<ZoneRecordData>;
+		tab: string;
+		missingToken: boolean;
 	}
 
-	let { jwtData }: Props = $props();
+	let { jwtData, tab = $bindable(), recordsQuery, missingToken }: Props = $props();
 
 	// Form state
 	let ttl = $state(1);
@@ -28,25 +31,6 @@
 	// Operation feedback
 	let operationMessage = $state<string>('');
 	let operationSuccess = $state<boolean>(false);
-
-	const recordsQuery = createQuery<ZoneRecordData>(() => ({
-		queryKey: ['records', jwtData],
-		queryFn: async () => {
-			if (!jwtData) {
-				throw new Error('User not signed in');
-			}
-			const response = await fetch(`http://127.0.0.1:8080/records`, {
-				headers: {
-					Authorization: `Bearer ${jwtData}`
-				}
-			});
-			if (!response.ok) {
-				throw new Error('Network response was not ok');
-			}
-			return response.json();
-		},
-		enabled: !!jwtData
-	}));
 
 	async function handleAddDomain(zoneId: string | undefined, zoneName: string | undefined) {
 		// Form validation
@@ -153,6 +137,11 @@
 		operationMessage = '';
 	}
 
+	function handleGoToSettings() {
+		tab = 'settings';
+		console.log(tab);
+	}
+
 	const animation =
 		'transition transition-discrete opacity-0 translate-y-[100px] starting:data-[state=open]:opacity-0 starting:data-[state=open]:translate-y-[100px] data-[state=open]:opacity-100 data-[state=open]:translate-y-0';
 </script>
@@ -162,6 +151,20 @@
 
 {#if recordsQuery.isPending}
 	<p class="p-4 text-neutral-500">Loading records...</p>
+{:else if missingToken}
+	<div class="rounded border border-amber-500/40 bg-amber-500/5 p-4 text-amber-100">
+		<p class="mb-2 font-semibold">Missing DNS access token!</p>
+		<p class="mb-4 text-sm text-amber-200/80">
+			Head over to the Settings tab and add a DNS access token so Drago can sync your zones.
+		</p>
+		<button
+			type="button"
+			class="preset-filled-500 btn font-semibold"
+			onclick={() => handleGoToSettings()}
+		>
+			Go to Settings
+		</button>
+	</div>
 {:else if recordsQuery.isError}
 	<p class="p-4 text-red-500">
 		Error loading records: {recordsQuery.error || 'Unknown error'}

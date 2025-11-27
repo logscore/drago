@@ -9,7 +9,8 @@
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: {
-				enabled: browser
+				enabled: browser,
+				retry: 1
 			}
 		}
 	});
