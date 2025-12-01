@@ -5,7 +5,6 @@ use aes_gcm::{
 use anyhow::{Context, Result};
 use std::env;
 
-// Struct to match your DB schema requirements
 pub struct EncryptionResult {
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,

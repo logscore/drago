@@ -8,7 +8,7 @@ import {
 	varbinary,
 	boolean
 } from 'drizzle-orm/mysql-core';
-import { user } from './authSchema'; // assuming auth schema file exports user
+import { user } from './authSchema';
 
 // ---------------------------
 // DNS API Tokens
@@ -40,7 +40,8 @@ export const apiKeys = mysqlTable(
 			.notNull()
 			.references(() => user.id, { onDelete: 'cascade' }),
 		name: varchar('name', { length: 255 }).notNull(),
-		keyHash: varchar('key_hash', { length: 97 }).notNull().unique(),
+		prefixId: varchar('prefix_id', { length: 20 }).notNull().unique(), // Indexed lookup
+		keyHash: varchar('key_hash', { length: 97 }).notNull(),
 		// Each API key can control a single DNS record. This is how we identify which record to update when a client syncs to us.
 		dns_record_id: varchar('dns_record_id', { length: 255 })
 			.references(() => dnsRecord.id)
@@ -54,7 +55,8 @@ export const apiKeys = mysqlTable(
 			.notNull()
 	},
 	(t) => ({
-		userIdx: index('idx_client_api_key_user_id').on(t.userId)
+		userIdx: index('idx_client_api_key_user_id').on(t.userId),
+		prefixIdx: index('idx_client_api_key_prefix').on(t.prefixId)
 	})
 );
 

@@ -86,6 +86,17 @@ pub struct CreateRecordResponse {
     pub success: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RecordResponse {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutRecordResponse {
+    pub result: RecordResponse,
+    pub success: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DeleteRecordResponse {
     pub result: DeletedDnsRecord,
@@ -99,6 +110,14 @@ pub struct DnsRecordPayload<'a> {
     pub content: &'a String,
     pub ttl: &'a i32,
     pub proxied: &'a bool,
+}
+
+#[derive(Serialize)]
+pub struct PutDnsRecordPayload<'a> {
+    pub r#type: &'a String,
+    pub name: &'a String,
+    pub content: &'a String,
+    pub ttl: &'a i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,4 +136,19 @@ pub struct ApiResponse<T> {
 pub struct AddApiKey {
     pub name: String,
     pub scope: String,
+}
+
+// API key is sent in the authorization header
+#[derive(Debug, Deserialize)]
+pub struct SyncRequest {
+    pub ip_address: String,
+    // Used as the new time updated and time api key used
+    pub time_synced: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncResponse {
+    pub success: bool,
+    pub updated: bool,
+    pub message: String,
 }

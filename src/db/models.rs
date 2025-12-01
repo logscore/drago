@@ -24,3 +24,15 @@ pub struct NewDnsAccessToken<'a> {
     pub token_encrypted: &'a Vec<u8>,
     pub tag: &'a Vec<u8>,
 }
+
+#[derive(Debug, Queryable)]
+#[diesel(table_name = schema::dns_record)]
+pub struct PutDnsRecord {
+    pub user_id: String,
+    pub id: String,
+    pub zone_id: String,
+    pub content: String,
+    pub record_name: String,
+    pub ttl: i32,
+    pub record_type: String,
+}

@@ -26,15 +26,17 @@ diesel::table! {
         id -> Varchar,
         #[max_length = 36]
         user_id -> Varchar,
+        #[max_length = 255]
+        name -> Varchar,
         #[max_length = 97]
         key_hash -> Varchar,
+        #[max_length = 255]
+        dns_record_id -> Varchar,
         last_used -> Nullable<Timestamp>,
         created_on -> Timestamp,
         updated_on -> Timestamp,
-        #[max_length = 255]
-        dns_record_id -> Varchar,
-        #[max_length = 255]
-        name -> Varchar,
+        #[max_length = 20]
+        prefix_id -> Varchar,
     }
 }
 

@@ -13,8 +13,6 @@ use tokio::sync::RwLock;
 // Base64 engine for URL-safe decoding
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-const VERSION: &str = "1";
-
 // 1. The Claims struct (What is inside the token)
 #[derive(Debug, Deserialize, Clone)]
 pub struct Claims {
@@ -212,14 +210,22 @@ where
     }
 }
 
-pub fn generate_api_key() -> String {
-    let rand_chars: String = rand::rng()
+pub fn generate_api_key() -> (String, String, String) {
+    // Public id isnt hashed, but is used for quick api lookups
+    let public_id: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect();
+
+    // Secret is hashed
+    let secret: String = rand::rng()
         .sample_iter(&Alphanumeric)
         .take(32)
         .map(char::from)
         .collect();
 
-    let api_key_string = format!("dgo_{}_{}", VERSION, rand_chars);
+    let full_key = format!("dgo_{}_{}", public_id, secret);
 
-    api_key_string
+    (full_key, public_id, secret)
 }

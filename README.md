@@ -17,8 +17,10 @@ Drago is named after the Lightning L-Drago 100HF from Beyblade Metal Masters, a 
 
 ## Drago is built with:
 
-- SvelteKit
+- SvelteKit (in a limited sense)
 - Rust (Axum)
 - MySQL (Planetscale)
 - A VPS
 - Love ❤️
+
+Uq2oqfMRoc2N_mqR19lIOsg6LsmuYIsvpFuchJXl

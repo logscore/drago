@@ -1,23 +1,33 @@
 mod db;
 mod lib;
 
+use std::env;
+
 use axum::{
     Json, Router,
     extract::Query,
-    http::{Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
+use dotenv::dotenv;
 use reqwest::Client;
 
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::{
-    db::schema::{api_keys, dns_record, dns_token, dns_zone},
+    db::{models::NewDnsAccessToken, *},
+    lib::auth::generate_api_key,
+};
+use crate::{
+    db::{
+        models::PutDnsRecord,
+        schema::{api_keys, dns_record, dns_token, dns_zone},
+    },
     lib::{
         auth::{AuthState, User},
         encryption::{decrypt, encrypt},
@@ -25,16 +35,19 @@ use crate::{
         utils::{get_user_token, hash_raw_string},
     },
 };
-use crate::{
-    db::{models::NewDnsAccessToken, *},
-    lib::auth::generate_api_key,
-};
 
 #[tokio::main]
 async fn main() {
-    // TODO: replace hard coded url with the env variable
-    let auth_state = AuthState::new("http://localhost:5173");
+    dotenv().ok();
+    let frontend_url = match env::var("FRONTEND_URL") {
+        Ok(variable) => variable,
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
 
+    let auth_state = AuthState::new(&frontend_url);
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([
@@ -58,8 +71,9 @@ async fn main() {
         .route("/api_keys", get(get_api_keys))
         .route("/api_key", post(add_api_key))
         .route("/api_key", delete(delete_api_key))
-        .layer(cors)
-        .with_state(auth_state);
+        .with_state(auth_state)
+        .route("/sync", put(sync_record))
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -70,6 +84,220 @@ async fn health() -> impl IntoResponse {
         StatusCode::OK,
         Json("Drago is running. Let it rip.".to_string()),
     )
+}
+
+async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl IntoResponse {
+    let ip_addr = body.ip_address;
+    let time_synced = body.time_synced;
+
+    dbg!(&ip_addr);
+    dbg!(&time_synced);
+
+    let api_key = match headers
+        .get("Bearer")
+        .and_then(|header| header.to_str().ok())
+    {
+        Some(key) => key,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(SyncResponse {
+                    success: false,
+                    updated: false,
+                    message: "No API key provided".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let key_parts: Vec<&str> = api_key.split("_").collect();
+
+    dbg!(&key_parts);
+
+    let public_prefix = match key_parts.get(1) {
+        Some(key) => key,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(SyncResponse {
+                    success: false,
+                    updated: false,
+                    message: "No API key provided".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    dbg!(&public_prefix);
+
+    let conn = &mut establish_connection();
+
+    // query the db for that value
+    let api_key_query_response = api_keys::table
+        .select(api_keys::id)
+        .filter(api_keys::prefix_id.eq(public_prefix))
+        .first::<String>(conn);
+
+    // Well use this id to update the api key entry for last used
+    let api_key_id = match api_key_query_response {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(SyncResponse {
+                    success: false,
+                    updated: false,
+                    message: "Invalid authorization".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    dbg!(&api_key_id);
+
+    // Now grab the dns record associated with the key hash by querying for the dns id and joining the dns record table and returning the contents
+    let connected_record = dns_record::table
+        .inner_join(api_keys::table)
+        .filter(dns_record::id.eq(api_keys::dns_record_id))
+        .filter(api_keys::id.eq(&api_key_id))
+        .select((
+            api_keys::user_id,
+            dns_record::id,
+            dns_record::zone_id,
+            dns_record::content,
+            dns_record::record_name,
+            dns_record::ttl,
+            dns_record::record_type,
+        ))
+        .first::<PutDnsRecord>(conn);
+
+    let connected_record_data = match connected_record {
+        Ok(data) => data,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(SyncResponse {
+                    success: false,
+                    updated: false,
+                    message: "No record accociated to API key".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if the incoming ip is the same as the existing one.
+    if connected_record_data.content == ip_addr {
+        (
+            StatusCode::OK,
+            Json(SyncResponse {
+                success: true,
+                updated: false,
+                message: "Record unchanged".to_string(),
+            }),
+        )
+            .into_response()
+    } else {
+        // If not, post to cloudlfare with the new ip
+        let decrypted_token = match get_user_token(conn, &connected_record_data.user_id) {
+            Ok(token) => token,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json("Failed to get user token"),
+                )
+                    .into_response();
+            }
+        };
+
+        let client = reqwest::Client::new();
+        let url = format!(
+            "https://api.cloudflare.com/client/v4/zones/{}/dns_records/{}",
+            connected_record_data.zone_id, connected_record_data.id
+        );
+
+        let payload = PutDnsRecordPayload {
+            // We only want to change the content, but type, name and ttl are required on the endpoint
+            r#type: &connected_record_data.record_type,
+            name: &connected_record_data.record_name,
+            // The content is all that really changes in this call
+            content: &ip_addr,
+            ttl: &connected_record_data.ttl,
+        };
+
+        dbg!(&decrypted_token);
+
+        let resp = match client
+            .put(&url)
+            .bearer_auth(&decrypted_token)
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+            }
+        };
+
+        let response = resp.json::<PutRecordResponse>().await;
+
+        let updated_dns_record_response_data = match response {
+            Ok(result) => result,
+            Err(e) => {
+                dbg!(&e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+            }
+        };
+
+        dbg!(&updated_dns_record_response_data);
+
+        if updated_dns_record_response_data.success {
+            let update_result = diesel::update(dns_record::table)
+                .set((
+                    dns_record::content.eq(&ip_addr),
+                    dns_record::last_synced_on.eq(chrono::Utc::now().naive_utc()),
+                ))
+                .filter(dns_record::user_id.eq(&connected_record_data.user_id))
+                .filter(dns_record::id.eq(&updated_dns_record_response_data.result.id))
+                .execute(conn);
+
+            match update_result {
+                Ok(_) => (
+                    // Return success
+                    StatusCode::OK,
+                    Json(SyncResponse {
+                        success: true,
+                        updated: true,
+                        message: "Record synced successfully".to_string(),
+                    }),
+                )
+                    .into_response(),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(SyncResponse {
+                        success: false,
+                        updated: false,
+                        message: format!("DB update failed: {}", err),
+                    }),
+                )
+                    .into_response(),
+            }
+        } else {
+            (
+                StatusCode::OK,
+                Json(SyncResponse {
+                    success: false,
+                    updated: false,
+                    message: "DNS provider error".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 // DNS Record Controls
@@ -84,6 +312,7 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
     let proxied = body.proxied;
 
     let conn = &mut establish_connection();
+    // TODO: Dont save the full url as we reference the zone name in the record by id
     let subdomain = format!("{}.{}", name, zone_name);
 
     let result = dns_record::table
@@ -116,7 +345,6 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
         }
     };
 
-    // ... (Cloudflare Logic) ...
     let client = reqwest::Client::new();
     let url = format!(
         "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
@@ -152,7 +380,7 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
         diesel::insert_into(dns_record::table)
             .values((
                 dns_record::id.eq(&new_token.id),
-                dns_record::user_id.eq(&user_id), // Secure ID
+                dns_record::user_id.eq(&user_id),
                 dns_record::record_name.eq(&new_token.name),
                 dns_record::zone_id.eq(&zone_id),
                 dns_record::content.eq(&new_token.content),
@@ -336,11 +564,8 @@ async fn delete_dns_record(
 }
 
 // DNS Token Controls
-async fn get_dns_access_tokens(
-    User(claims): User, // AUTHENTICATED
-                        // Params removed
-) -> impl IntoResponse {
-    let user_id = claims.sub; // Secure ID
+async fn get_dns_access_tokens(User(claims): User) -> impl IntoResponse {
+    let user_id = claims.sub;
     let mut conn = establish_connection();
 
     let tokens = match dns_token::table
@@ -363,11 +588,11 @@ async fn get_dns_access_tokens(
 }
 
 async fn add_dns_access_token(
-    User(claims): User, // AUTHENTICATED
+    User(claims): User,
     Json(body): Json<AddAccessToken>,
 ) -> impl IntoResponse {
     let name = body.name;
-    let user_id = claims.sub; // Secure ID
+    let user_id = claims.sub;
     let dns_token_str = body.token;
     let id = Uuid::now_v7().to_string();
     let mut conn = establish_connection();
@@ -475,39 +700,30 @@ async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl In
     let mut conn = establish_connection();
 
     // Create an api key, hash it
-    let api_key = generate_api_key();
+    let (full_api_key, public_id, _secret) = generate_api_key();
 
-    let hashed_key = match hash_raw_string(&api_key) {
-        Ok(hashed_key) => hashed_key,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(format!("Failed to hash key: {}", err.to_string())),
-            )
-                .into_response();
-        }
-    };
+    // Hash the FULL key (so verification is simple later)
+    let hashed_key = hash_raw_string(&full_api_key).expect("Hash failed");
 
-    // Save the name, hash, scope id and user id to the database
     let result = conn.transaction(|conn| {
         diesel::insert_into(api_keys::table)
             .values((
                 api_keys::id.eq(Uuid::now_v7().to_string()),
-                api_keys::name.eq(key_name),
-                api_keys::key_hash.eq(hashed_key),
-                api_keys::dns_record_id.eq(key_scope),
-                api_keys::user_id.eq(user_id),
+                api_keys::name.eq(&key_name),
+                api_keys::prefix_id.eq(&public_id),
+                api_keys::key_hash.eq(&hashed_key),
+                api_keys::dns_record_id.eq(&key_scope),
+                api_keys::user_id.eq(&user_id),
             ))
             .execute(conn)?;
         Ok::<_, diesel::result::Error>(())
     });
 
+    // Return full key to user
     match result {
-        Ok(_) => (StatusCode::CREATED, Json(&api_key)).into_response(),
+        Ok(_) => (StatusCode::CREATED, Json(&full_api_key)).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(err.to_string())).into_response(),
     }
-
-    // Frontend recieves the response value, and display it to the user to copy
 }
 
 async fn delete_api_key(
@@ -655,3 +871,5 @@ async fn fetch_zone_records(
         }
     }
 }
+
+// TODO: Add some sort of sync function where we refetch from the DNS provider so that we have an updated list of the records.
