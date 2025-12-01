@@ -44,7 +44,7 @@ export const apiKeys = mysqlTable(
 		keyHash: varchar('key_hash', { length: 97 }).notNull(),
 		// Each API key can control a single DNS record. This is how we identify which record to update when a client syncs to us.
 		dns_record_id: varchar('dns_record_id', { length: 255 })
-			.references(() => dnsRecord.id)
+			.references(() => dnsRecord.id, { onDelete: 'cascade' })
 			.unique()
 			.notNull(),
 		lastUsed: timestamp('last_used'),

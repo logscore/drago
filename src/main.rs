@@ -4,11 +4,11 @@ mod lib;
 use std::env;
 
 use axum::{
-    Json, Router,
-    extract::Query,
+    extract::{FromRef, Query, State},
     http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
     routing::{delete, get, post, put},
+    Json, Router,
 };
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     db::{models::NewDnsAccessToken, *},
-    lib::auth::generate_api_key,
+    lib::auth::{generate_api_key, AuthState},
 };
 use crate::{
     db::{
@@ -29,27 +29,66 @@ use crate::{
         schema::{api_keys, dns_record, dns_token, dns_zone},
     },
     lib::{
-        auth::{AuthState, User},
+        auth::User,
         encryption::{decrypt, encrypt},
         types::*,
         utils::{get_user_token, hash_raw_string},
     },
 };
+use diesel::r2d2::{ConnectionManager, Pool};
+use std::net::SocketAddr;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[derive(Clone)]
+struct AppState {
+    pool: Pool<ConnectionManager<MysqlConnection>>,
+    auth: AuthState,
+}
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(input: &AppState) -> Self {
+        input.auth.clone()
+    }
+}
+
+impl FromRef<AppState> for Pool<ConnectionManager<MysqlConnection>> {
+    fn from_ref(input: &AppState) -> Self {
+        input.pool.clone()
+    }
+}
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    let frontend_url = match env::var("FRONTEND_URL") {
-        Ok(variable) => variable,
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
+
+    // 1. Initialize Tracing (Logging)
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let frontend_url = env::var("FRONTEND_URL").expect("FRONTEND_URL must be set");
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+
+    // 2. Initialize Connection Pool
+    let manager = ConnectionManager::<MysqlConnection>::new(db_url);
+    let pool = Pool::builder()
+        .test_on_check_out(true)
+        .build(manager)
+        .expect("Could not build connection pool");
+
+    let auth_state = crate::lib::auth::AuthState::new(&frontend_url);
+
+    // Combine state
+    let state = AppState {
+        pool,
+        auth: auth_state,
     };
 
-    let auth_state = AuthState::new(&frontend_url);
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(frontend_url.parse::<axum::http::HeaderValue>().unwrap()) // Note: This expects a specific type, ensure String implies Into<HeaderValue> or parse it
         .allow_methods([
             Method::GET,
             Method::PUT,
@@ -71,11 +110,14 @@ async fn main() {
         .route("/api_keys", get(get_api_keys))
         .route("/api_key", post(add_api_key))
         .route("/api_key", delete(delete_api_key))
-        .with_state(auth_state)
         .route("/sync", put(sync_record))
+        .with_state(state)
         .layer(cors);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    tracing::info!("listening on {}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -86,12 +128,13 @@ async fn health() -> impl IntoResponse {
     )
 }
 
-async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl IntoResponse {
+async fn sync_record(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SyncRequest>,
+) -> impl IntoResponse {
     let ip_addr = body.ip_address;
     let time_synced = body.time_synced;
-
-    dbg!(&ip_addr);
-    dbg!(&time_synced);
 
     let api_key = match headers
         .get("Bearer")
@@ -113,8 +156,6 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
 
     let key_parts: Vec<&str> = api_key.split("_").collect();
 
-    dbg!(&key_parts);
-
     let public_prefix = match key_parts.get(1) {
         Some(key) => key,
         None => {
@@ -130,9 +171,7 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
         }
     };
 
-    dbg!(&public_prefix);
-
-    let conn = &mut establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     // query the db for that value
     let api_key_query_response = api_keys::table
@@ -155,8 +194,6 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
                 .into_response();
         }
     };
-
-    dbg!(&api_key_id);
 
     // Now grab the dns record associated with the key hash by querying for the dns id and joining the dns record table and returning the contents
     let connected_record = dns_record::table
@@ -228,8 +265,6 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
             ttl: &connected_record_data.ttl,
         };
 
-        dbg!(&decrypted_token);
-
         let resp = match client
             .put(&url)
             .bearer_auth(&decrypted_token)
@@ -248,18 +283,15 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
         let updated_dns_record_response_data = match response {
             Ok(result) => result,
             Err(e) => {
-                dbg!(&e);
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
             }
         };
-
-        dbg!(&updated_dns_record_response_data);
 
         if updated_dns_record_response_data.success {
             let update_result = diesel::update(dns_record::table)
                 .set((
                     dns_record::content.eq(&ip_addr),
-                    dns_record::last_synced_on.eq(chrono::Utc::now().naive_utc()),
+                    dns_record::last_synced_on.eq(&time_synced),
                 ))
                 .filter(dns_record::user_id.eq(&connected_record_data.user_id))
                 .filter(dns_record::id.eq(&updated_dns_record_response_data.result.id))
@@ -301,7 +333,11 @@ async fn sync_record(headers: HeaderMap, Json(body): Json<SyncRequest>) -> impl 
 }
 
 // DNS Record Controls
-async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> impl IntoResponse {
+async fn add_dns_record(
+    State(state): State<AppState>,
+    User(claims): User,
+    Json(body): Json<AddDnsRecord>,
+) -> impl IntoResponse {
     let user_id = claims.sub;
     let zone_id = body.zone_id;
     let zone_name = body.zone_name;
@@ -311,8 +347,7 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
     let ttl = body.ttl;
     let proxied = body.proxied;
 
-    let conn = &mut establish_connection();
-    // TODO: Dont save the full url as we reference the zone name in the record by id
+    let conn = &mut state.pool.get().expect("Failed to get DB connection"); // TODO: Dont save the full url as we reference the zone name in the record by id
     let subdomain = format!("{}.{}", name, zone_name);
 
     let result = dns_record::table
@@ -398,14 +433,14 @@ async fn add_dns_record(User(claims): User, Json(body): Json<AddDnsRecord>) -> i
     }
 }
 
-async fn list_dns_records(User(claims): User) -> impl IntoResponse {
+async fn list_dns_records(State(state): State<AppState>, User(claims): User) -> impl IntoResponse {
     let curr_user_id = claims.sub;
-    let mut conn = establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     let zones_result: Result<Vec<(String, String)>, DieselError> = dns_zone::table
         .filter(dns_zone::user_id.eq(&curr_user_id))
         .select((dns_zone::id, dns_zone::zone_name))
-        .load::<(String, String)>(&mut conn);
+        .load::<(String, String)>(conn);
 
     let zones = match zones_result {
         Ok(rows) => rows,
@@ -423,7 +458,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
                 dns_token::nonce,
                 dns_token::tag,
             ))
-            .first::<(String, Vec<u8>, Vec<u8>, Vec<u8>)>(&mut conn)
+            .first::<(String, Vec<u8>, Vec<u8>, Vec<u8>)>(conn)
             .optional();
 
         let (token_id, ciphertext, nonce, tag) = match token_data {
@@ -440,7 +475,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
         };
 
         zone_dns_data =
-            match initialize_zones(&mut conn, &curr_user_id, &decrypted_token, &token_id).await {
+            match initialize_zones(conn, &curr_user_id, &decrypted_token, &token_id).await {
                 Ok(data) => data,
                 Err(_) => {
                     return (
@@ -458,7 +493,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
     let raw_zones = match dns_zone::table
         .filter(dns_zone::user_id.eq(&curr_user_id))
         .select((dns_zone::id, dns_zone::zone_name))
-        .load::<(String, String)>(&mut conn)
+        .load::<(String, String)>(conn)
     {
         Ok(z) => z,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
@@ -475,7 +510,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
                 dns_record::record_type,
                 dns_record::proxied,
             ))
-            .load::<(String, String, String, i32, String, bool)>(&mut conn)
+            .load::<(String, String, String, i32, String, bool)>(conn)
             .unwrap_or_default();
 
         let records_structs: Vec<DnsRecord> = raw_records
@@ -505,6 +540,7 @@ async fn list_dns_records(User(claims): User) -> impl IntoResponse {
 }
 
 async fn delete_dns_record(
+    State(state): State<AppState>,
     User(claims): User,
     Query(params): Query<DeleteDnsRecord>,
 ) -> impl IntoResponse {
@@ -513,7 +549,7 @@ async fn delete_dns_record(
     let zone_id = params.zone_id;
 
     let client = reqwest::Client::new();
-    let conn = &mut establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     let decrypted_token = match get_user_token(conn, &user_id) {
         Ok(token) => token,
@@ -564,14 +600,17 @@ async fn delete_dns_record(
 }
 
 // DNS Token Controls
-async fn get_dns_access_tokens(User(claims): User) -> impl IntoResponse {
+async fn get_dns_access_tokens(
+    State(state): State<AppState>,
+    User(claims): User,
+) -> impl IntoResponse {
     let user_id = claims.sub;
-    let mut conn = establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     let tokens = match dns_token::table
         .filter(dns_token::user_id.eq(&user_id))
         .select((dns_token::name, dns_token::id, dns_token::created_on))
-        .load::<(String, String, NaiveDateTime)>(&mut conn)
+        .load::<(String, String, NaiveDateTime)>(conn)
     {
         Ok(tokens) => tokens
             .into_iter()
@@ -588,6 +627,7 @@ async fn get_dns_access_tokens(User(claims): User) -> impl IntoResponse {
 }
 
 async fn add_dns_access_token(
+    State(state): State<AppState>,
     User(claims): User,
     Json(body): Json<AddAccessToken>,
 ) -> impl IntoResponse {
@@ -595,7 +635,7 @@ async fn add_dns_access_token(
     let user_id = claims.sub;
     let dns_token_str = body.token;
     let id = Uuid::now_v7().to_string();
-    let mut conn = establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     let encrypted = match encrypt(&dns_token_str) {
         Ok(enc) => enc,
@@ -627,13 +667,14 @@ async fn add_dns_access_token(
 }
 
 async fn delete_access_token(
+    State(state): State<AppState>,
     User(claims): User,
     Query(params): Query<DeleteAccessToken>,
 ) -> impl IntoResponse {
     let dns_token_id = params.token_id;
     let user_id = claims.sub;
-    let mut conn = establish_connection();
-
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
+    
     let result = conn.transaction(|conn| {
         diesel::delete(
             dns_token::table
@@ -651,10 +692,10 @@ async fn delete_access_token(
 }
 
 // API Key Controls
-async fn get_api_keys(User(claims): User) -> impl IntoResponse {
+async fn get_api_keys(State(state): State<AppState>, User(claims): User) -> impl IntoResponse {
     let user_id = claims.sub;
 
-    let mut conn: MysqlConnection = establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     match api_keys::table
         .filter(api_keys::user_id.eq(&user_id))
@@ -666,7 +707,7 @@ async fn get_api_keys(User(claims): User) -> impl IntoResponse {
             api_keys::name,
             dns_record::record_name,
         ))
-        .load::<(String, NaiveDateTime, Option<NaiveDateTime>, String, String)>(&mut conn)
+        .load::<(String, NaiveDateTime, Option<NaiveDateTime>, String, String)>(conn)
     {
         Ok(response) => (
             StatusCode::OK,
@@ -692,12 +733,16 @@ async fn get_api_keys(User(claims): User) -> impl IntoResponse {
     }
 }
 
-async fn add_api_key(User(claims): User, Json(body): Json<AddApiKey>) -> impl IntoResponse {
+async fn add_api_key(
+    State(state): State<AppState>,
+    User(claims): User,
+    Json(body): Json<AddApiKey>,
+) -> impl IntoResponse {
     let user_id = &claims.sub;
     let key_name = &body.name;
     let key_scope = &body.scope;
 
-    let mut conn = establish_connection();
+    let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
     // Create an api key, hash it
     let (full_api_key, public_id, _secret) = generate_api_key();
