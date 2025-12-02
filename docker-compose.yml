@@ -5,12 +5,6 @@ services:
       context: ./site/
       dockerfile: Dockerfile
     restart: unless-stopped
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL}
-      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL}
-      PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL}
     networks:
       - drago-network
     ports:
@@ -27,12 +21,6 @@ services:
       context: ./
       dockerfile: Dockerfile
     restart: unless-stopped
-    environment:
-      RUST_LOG: info
-      DATABASE_URL: ${DATABASE_URL}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      FRONTEND_URL: ${FRONTEND_URL}
-      API_URL: ${API_URL}
     networks:
       - drago-network
     ports:
