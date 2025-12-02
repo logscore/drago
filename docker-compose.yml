@@ -34,32 +34,32 @@ services:
       timeout: 10s
       retries: 3
 
-  # Database Service
-  db:
-    image: mysql:8.4
-    container_name: drago-db
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_PORT: ${MYSQL_PORT}
-    ports:
-      - "6789:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    networks:
-      - drago-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+#   # Database Service
+#   db:
+#     image: mysql:8.4
+#     container_name: drago-db
+#     restart: unless-stopped
+#     environment:
+#       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+#       MYSQL_USER: ${MYSQL_USER}
+#       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+#       MYSQL_DATABASE: ${MYSQL_DATABASE}
+#       MYSQL_PORT: ${MYSQL_PORT}
+#     ports:
+#       - "6789:3306"
+#     volumes:
+#       - mysql-data:/var/lib/mysql
+#     networks:
+#       - drago-network
+#     healthcheck:
+#       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
 
-volumes:
-  mysql-data:
-    name: drago-db-data
+# volumes:
+#   mysql-data:
+#     name: drago-db-data
 
 networks:
   drago-network:
