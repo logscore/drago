@@ -10,5 +10,5 @@ FROM debian:bookworm-slim
 RUN apt update && apt install -y ca-certificates libmariadb3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/drago-dns .
-EXPOSE 8080
+EXPOSE 8088
 CMD ["./drago-dns"]

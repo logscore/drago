@@ -22,5 +22,3 @@ Drago is named after the Lightning L-Drago 100HF from Beyblade Metal Masters, a 
 - MySQL (Planetscale)
 - A VPS
 - Love ❤️
-
-Uq2oqfMRoc2N_mqR19lIOsg6LsmuYIsvpFuchJXl
