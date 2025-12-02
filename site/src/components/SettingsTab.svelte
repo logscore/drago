@@ -6,6 +6,7 @@
 	import type { AccessToken } from '$lib/types';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { useQueryClient } from '@tanstack/svelte-query';
+	import { env } from '$env/dynamic/public';
 
 	const queryClient = useQueryClient();
 
@@ -41,7 +42,7 @@
 			if (!jwtData) {
 				throw new Error('User ID is required');
 			}
-			const response = await fetch(`http://127.0.0.1:8080/access_tokens`, {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/access_tokens`, {
 				headers: {
 					Authorization: `Bearer ${jwtData}`
 				}
@@ -56,7 +57,7 @@
 
 	async function addAccessToken() {
 		try {
-			const response = await fetch('http://127.0.0.1:8080/access_token', {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/access_token`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -93,7 +94,7 @@
 
 	async function deleteToken(tokenId: string) {
 		try {
-			const response = await fetch(`http://127.0.0.1:8080/access_token?token_id=${tokenId}`, {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/access_token?token_id=${tokenId}`, {
 				headers: {
 					Authorization: `Bearer ${jwtData}`
 				},

@@ -41,7 +41,7 @@
 		}
 
 		try {
-			const response = await fetch('http://127.0.0.1:8080/record', {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/record`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -88,7 +88,7 @@
 	async function handleDelete(zoneId: string, recordId: string) {
 		try {
 			const response = await fetch(
-				`http://127.0.0.1:8080/record?record_id=${recordId}&zone_id=${zoneId}`,
+				`${env.PUBLIC_BACKEND_URL}/record?record_id=${recordId}&zone_id=${zoneId}`,
 				{
 					headers: {
 						Authorization: `Bearer ${jwtData}`

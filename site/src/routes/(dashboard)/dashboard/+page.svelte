@@ -6,6 +6,7 @@
 	import DomainsTab from '../../../components/DomainsTab.svelte';
 	import { createQuery } from '@tanstack/svelte-query';
 	import type { ZoneRecordData } from '$lib/types';
+	import { env } from '$env/dynamic/public';
 
 	let tab = $state<string>('domains');
 	let missingToken = $state<boolean>(false);
@@ -34,7 +35,7 @@
 
 			missingToken = false;
 
-			const response = await fetch(`http://127.0.0.1:8080/records`, {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/records`, {
 				headers: {
 					Authorization: `Bearer ${jwtData}`
 				}

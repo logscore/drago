@@ -13,6 +13,6 @@ export const auth = betterAuth({
 		enabled: true,
 		autoSignIn: true
 	},
-	plugins: [jwt(), sveltekitCookies(getRequestEvent)], // make sure this is the last plugin in the array
+	plugins: [jwt(), sveltekitCookies(getRequestEvent)],
 	telemetry: { enabled: false }
 });

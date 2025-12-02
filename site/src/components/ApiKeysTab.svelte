@@ -40,7 +40,7 @@
 			if (!jwtData) {
 				throw new Error('User not signed in');
 			}
-			const response = await fetch(`http://127.0.0.1:8080/api_keys`, {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/api_keys`, {
 				headers: {
 					Authorization: `Bearer ${jwtData}`
 				}
@@ -55,7 +55,7 @@
 
 	const addKeyMutation = createMutation(() => ({
 		mutationFn: async (data: { name: string; scope: string; zoneId: string; recordId: string }) => {
-			const response = await fetch('http://127.0.0.1:8080/api_key', {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/api_key`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -89,7 +89,7 @@
 
 	const deleteKeyMutation = createMutation(() => ({
 		mutationFn: async (data: { key_id: string }) => {
-			const response = await fetch(`http://127.0.0.1:8080/api_key?key_id=${data.key_id}`, {
+			const response = await fetch(`${env.PUBLIC_BACKEND_URL}/api_key?key_id=${data.key_id}`, {
 				method: 'DELETE',
 				headers: {
 					'Content-Type': 'application/json',

@@ -61,7 +61,6 @@ impl FromRef<AppState> for Pool<ConnectionManager<MysqlConnection>> {
 async fn main() {
     dotenv().ok();
 
-    // 1. Initialize Tracing (Logging)
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -70,9 +69,11 @@ async fn main() {
         .init();
 
     let frontend_url = env::var("FRONTEND_URL").expect("FRONTEND_URL must be set");
+    let api_url = env::var("API_URL").expect("API_URL must be set");
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    // 2. Initialize Connection Pool
+    let addr: SocketAddr = api_url.parse().expect("Invalid API_URL format");
+
     let manager = ConnectionManager::<MysqlConnection>::new(db_url);
     let pool = Pool::builder()
         .test_on_check_out(true)
@@ -81,14 +82,13 @@ async fn main() {
 
     let auth_state = crate::lib::auth::AuthState::new(&frontend_url);
 
-    // Combine state
     let state = AppState {
         pool,
         auth: auth_state,
     };
 
     let cors = CorsLayer::new()
-        .allow_origin(frontend_url.parse::<axum::http::HeaderValue>().unwrap()) // Note: This expects a specific type, ensure String implies Into<HeaderValue> or parse it
+        .allow_origin(frontend_url.parse::<axum::http::HeaderValue>().unwrap())
         .allow_methods([
             Method::GET,
             Method::PUT,
@@ -114,7 +114,6 @@ async fn main() {
         .with_state(state)
         .layer(cors);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     tracing::info!("listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -674,7 +673,7 @@ async fn delete_access_token(
     let dns_token_id = params.token_id;
     let user_id = claims.sub;
     let conn = &mut state.pool.get().expect("Failed to get DB connection");
-    
+
     let result = conn.transaction(|conn| {
         diesel::delete(
             dns_token::table
