@@ -1,0 +1,11 @@
+[package]
+name = "drago-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.42"
+daemonize = "0.5.0"
+reqwest = {version="0.12.24", features = ["blocking"]}
+serde_json = "1.0.145"
+tokio = "1.48.0"
