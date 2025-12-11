@@ -26,36 +26,38 @@ fn main() {
 
     match daemonize.start() {
         Ok(_) => {
-            let client = Client::new();
-            let response = get_network_ip(&client);
+            loop {
+                let client = Client::new();
+                let response = get_network_ip(&client);
 
-            // Log the result to the stdout/stderr files we created
-            dbg!(&response);
+                // Log the result to the stdout/stderr files we created
+                dbg!(&response);
 
-            if response.success {
-                println!("Success: {}", response.message);
-                if let Ok(ip) = response.data {
-                    println!("IP is: {}", ip);
-                    // Send to Drago sync endpoint here...
-                    let api_key = match read_api_key_from_file() {
-                        Ok(key) => key,
-                        Err(e) => {
-                            eprintln!("Error reading API key from .conf file: {}", e);
-                            String::new()
+                if response.success {
+                    println!("Success: {}", response.message);
+                    if let Ok(ip) = response.data {
+                        println!("IP is: {}", ip);
+                        // Send to Drago sync endpoint here...
+                        let api_key = match read_api_key_from_file() {
+                            Ok(key) => key,
+                            Err(e) => {
+                                eprintln!("Error reading API key from .conf file: {}", e);
+                                String::new()
+                            }
+                        };
+
+                        let sync_response = send_sync(&client, &ip, &api_key);
+                        match sync_response {
+                            Ok(_) => println!("Sync successful"),
+                            Err(e) => eprintln!("Sync failed: {}", e),
                         }
-                    };
-
-                    let sync_response = send_sync(&client, &ip, &api_key);
-                    match sync_response {
-                        Ok(_) => println!("Sync successful"),
-                        Err(e) => eprintln!("Sync failed: {}", e),
                     }
+                } else {
+                    eprintln!("Failure: {}", response.message);
                 }
-            } else {
-                eprintln!("Failure: {}", response.message);
+                // SET THIS DURATION TO 300 FOR PROD
+                thread::sleep(Duration::from_secs(10));
             }
-            // SET THIS DURATION TO 300 FOR PROD
-            thread::sleep(Duration::from_secs(10));
         }
         Err(e) => eprintln!("Error starting daemon: {}", e),
     }
