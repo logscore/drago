@@ -112,13 +112,15 @@ fn read_api_key_from_file() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn send_sync(client: &Client, ip_address: &str, api_key: &str) -> Result<(), String> {
+    let drago_api_url: &str = option_env!("DRAGO_API_URL").unwrap_or("http://localhost:8080");
+
     let payload = json!({
         "ip": ip_address,
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
     let response = client
-        .post("http://127.0.0.1:8080/sync")
+        .post(format!("{}/sync", drago_api_url))
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .body(payload.to_string())

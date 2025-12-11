@@ -3,3 +3,5 @@
 /Users/archimedes/Desktop/projects/DragoDNS/client/target/debug/deps/libdrago_client-812ec731298a6162.rmeta: src/main.rs
 
 src/main.rs:
+
+# env-dep:DRAGO_API_URL
