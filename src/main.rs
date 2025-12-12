@@ -136,8 +136,9 @@ async fn sync_record(
     let time_synced = body.time_synced;
 
     let api_key = match headers
-        .get("Bearer")
-        .and_then(|header| header.to_str().ok())
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer").map(str::trim))
     {
         Some(key) => key,
         None => {
@@ -146,7 +147,8 @@ async fn sync_record(
                 Json(SyncResponse {
                     success: false,
                     updated: false,
-                    message: "No API key provided".to_string(),
+                    message: "Missing or invalid Authorization header (expected Bearer token)"
+                        .to_string(),
                 }),
             )
                 .into_response();

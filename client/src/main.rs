@@ -1,150 +1,79 @@
-extern crate daemonize;
+use clap::{Parser, Subcommand};
+use std::process;
 
-use daemonize::Daemonize;
-use reqwest::blocking::Client;
-use serde_json::json; // NOTE: Using blocking client
-use std::{
-    fs::{self, *},
-    path::Path,
-    thread,
-    time::Duration,
-};
+mod api;
+mod config;
+mod daemon;
+mod processes;
+
+#[derive(Parser)]
+#[command(name = "drago")]
+#[command(about = "Dynamic DNS client for hobbyists")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Store API key securely
+    Login,
+    /// Start the daemon
+    Start,
+    /// Stop the daemon
+    Stop,
+    /// Show daemon status
+    Status,
+    /// Restart the daemon
+    Restart,
+    /// Internal command: runs the daemon (do not call directly)
+    Daemon,
+}
 
 fn main() {
-    let stdout = File::create("/tmp/drago.out").unwrap();
-    let stderr = File::create("/tmp/drago.err").unwrap();
+    let cli = Cli::parse();
 
-    let daemonize = Daemonize::new()
-        .pid_file("/tmp/drago.pid")
-        .chown_pid_file(true)
-        .working_directory("/tmp")
-        .user("nobody")
-        .group("daemon")
-        .umask(0o777)
-        .stdout(stdout)
-        .stderr(stderr);
-
-    match daemonize.start() {
-        Ok(_) => {
-            loop {
-                let client = Client::new();
-                let response = get_network_ip(&client);
-
-                // Log the result to the stdout/stderr files we created
-                dbg!(&response);
-
-                if response.success {
-                    println!("Success: {}", response.message);
-                    if let Ok(ip) = response.data {
-                        println!("IP is: {}", ip);
-                        // Send to Drago sync endpoint here...
-                        let api_key = match read_api_key_from_file() {
-                            Ok(key) => key,
-                            Err(e) => {
-                                eprintln!("Error reading API key from .conf file: {}", e);
-                                String::new()
-                            }
-                        };
-
-                        let sync_response = send_sync(&client, &ip, &api_key);
-                        match sync_response {
-                            Ok(_) => println!("Sync successful"),
-                            Err(e) => eprintln!("Sync failed: {}", e),
-                        }
-                    }
-                } else {
-                    eprintln!("Failure: {}", response.message);
-                }
-                // SET THIS DURATION TO 300 FOR PROD
-                thread::sleep(Duration::from_secs(10));
+    match cli.command {
+        Commands::Login => match config::store_api_key() {
+            Ok(()) => println!("✅ API key saved successfully"),
+            Err(e) => {
+                eprintln!("❌ Failed to save API key: {}", e);
+                process::exit(1);
             }
-        }
-        Err(e) => eprintln!("Error starting daemon: {}", e),
-    }
-}
-
-// Fixed: Explicit return type. Changed T to String because you want the IP text.
-fn get_network_ip(client: &Client) -> ApiResponse<String> {
-    // 1. Send Request
-    match client.get("https://api.ipify.org").send() {
-        Ok(resp) => {
-            // 2. Check HTTP status
-            if !resp.status().is_success() {
-                return ApiResponse {
-                    success: false,
-                    data: Err(format!("HTTP Error: {}", resp.status())),
-                    message: "Server returned error code".to_string(),
-                };
-            }
-
-            // 3. Extract Body (IP Address)
-            match resp.text() {
-                Ok(ip_text) => ApiResponse {
-                    success: true,
-                    data: Ok(ip_text),
-                    message: "Successfully retrieved network IP address".to_string(),
-                },
-                Err(e) => ApiResponse {
-                    success: false,
-                    data: Err(e.to_string()),
-                    message: "Failed to read response body".to_string(),
-                },
-            }
-        }
-        Err(error) => ApiResponse {
-            success: false,
-            data: Err(error.to_string()),
-            message: "Failed to connect to network IP service".to_string(),
         },
+        Commands::Start => match processes::start_daemon() {
+            Ok(()) => println!("✅ Daemon started"),
+            Err(e) => {
+                eprintln!("❌ Failed to start daemon: {}", e);
+                process::exit(1);
+            }
+        },
+        Commands::Stop => match processes::stop_daemon() {
+            Ok(()) => println!("✅ Daemon stopped"),
+            Err(e) => {
+                eprintln!("❌ Failed to stop daemon: {}", e);
+                process::exit(1);
+            }
+        },
+        Commands::Status => match processes::daemon_status() {
+            Ok(status) => println!("{}", status),
+            Err(e) => {
+                eprintln!("❌ Failed to get daemon status: {}", e);
+                process::exit(1);
+            }
+        },
+        Commands::Restart => match processes::restart_daemon() {
+            Ok(()) => println!("✅ Daemon restarted"),
+            Err(e) => {
+                eprintln!("❌ Failed to restart daemon: {}", e);
+                process::exit(1);
+            }
+        },
+        Commands::Daemon => {
+            if let Err(e) = daemon::run() {
+                eprintln!("❌ Daemon error: {}", e);
+                process::exit(1);
+            }
+        }
     }
-}
-
-fn read_api_key_from_file() -> Result<String, Box<dyn std::error::Error>> {
-    let key_path = "/etc/drago/app.conf";
-
-    // Check file
-    if !Path::new(key_path).exists() {
-        return Err(format!("API key file not found at {}", key_path).into());
-    }
-
-    // Read file
-    let api_key = fs::read_to_string(key_path)?.trim().to_string();
-
-    Ok(api_key)
-}
-
-fn send_sync(client: &Client, ip_address: &str, api_key: &str) -> Result<(), String> {
-    let drago_api_url: &str = option_env!("DRAGO_API_URL").unwrap_or("http://localhost:8080");
-
-    let payload = json!({
-        "ip": ip_address,
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    });
-
-    let response = client
-        .post(format!("{}/sync", drago_api_url))
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .body(payload.to_string())
-        .send()
-        .map_err(|e| format!("Failed to send sync request: {}", e))?;
-
-    // Check response status
-    if response.status().is_success() {
-        println!("Sync request successful");
-        Ok(())
-    } else {
-        Err(format!(
-            "Sync request failed with status: {}",
-            response.status()
-        ))
-    }
-}
-
-// ==========TYPES=========
-#[derive(Debug)]
-pub struct ApiResponse<T> {
-    pub success: bool,
-    pub data: Result<T, String>,
-    pub message: String,
 }

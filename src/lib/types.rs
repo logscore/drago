@@ -112,7 +112,7 @@ pub struct DnsRecordPayload<'a> {
     pub proxied: &'a bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct PutDnsRecordPayload<'a> {
     pub r#type: &'a String,
     pub name: &'a String,
