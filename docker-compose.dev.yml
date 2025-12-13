@@ -1,30 +1,76 @@
+version: "3.9"
+
 services:
-  # Database Service
-  db:
-    image: mariadb:12
-    container_name: drago-db
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_PORT: ${MYSQL_PORT}
-    ports:
-      - "6789:3306"
+  backend:
+    image: rust:1.91.1
+    container_name: drago-backend
+    working_dir: /app
+    command: bash -c "cargo install cargo-watch && cargo watch -x run"
     volumes:
-      - mysql-data:/var/lib/mysql
+      - .:/app
+      - cargo-target:/app/target
+    ports:
+      - "8088:8088"
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - drago-network
+
+  frontend:
+    image: oven/bun:1-alpine
+    container_name: drago-frontend
+    working_dir: /app
+    command: sh -c "bun install && bun run dev --host"
+    volumes:
+      - ./site:/app
+      - bun-node-modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - drago-network
+
+  db:
+    image: mariadb:11
+    container_name: drago-db
+    restart: unless-stopped
+    ports:
+      - "6789:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test:
+        [
+          "CMD",
+          "mariadb-admin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "${MYSQL_USER}",
+          "-p${MYSQL_PASSWORD}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    networks:
+      - drago-network
 
 volumes:
-  mysql-data:
-    name: drago-db-data
+  mariadb_data:
+  cargo-target:
+  bun-node-modules:
 
 networks:
   drago-network:

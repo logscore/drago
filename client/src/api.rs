@@ -11,7 +11,7 @@ struct SyncRequest {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ApiResponse {
+pub struct SyncResponse {
     pub success: bool,
     pub updated: bool,
     pub message: String,
@@ -55,7 +55,7 @@ pub fn sync_ip_to_api(ip: &str) -> Result<String, Box<dyn std::error::Error>> {
     }
 
     // Try to parse the structured API response
-    match serde_json::from_str::<ApiResponse>(&text) {
+    match serde_json::from_str::<SyncResponse>(&text) {
         Ok(api_resp) => {
             if api_resp.success {
                 Ok(format!(

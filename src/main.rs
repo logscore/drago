@@ -1,22 +1,6 @@
 mod db;
 mod lib;
 
-use std::env;
-
-use axum::{
-    extract::{FromRef, Query, State},
-    http::{HeaderMap, Method, StatusCode},
-    response::IntoResponse,
-    routing::{delete, get, post, put},
-    Json, Router,
-};
-use chrono::NaiveDateTime;
-use diesel::prelude::*;
-use dotenv::dotenv;
-
-use tower_http::cors::{Any, CorsLayer};
-use uuid::Uuid;
-
 use crate::{
     db::{models::NewDnsAccessToken, *},
     lib::auth::{generate_api_key, AuthState},
@@ -33,9 +17,22 @@ use crate::{
         utils::{get_user_token, hash_raw_string},
     },
 };
+use axum::{
+    extract::{FromRef, Query, State},
+    http::{HeaderMap, Method, StatusCode},
+    response::IntoResponse,
+    routing::{delete, get, post, put},
+    Json, Router,
+};
+use chrono::NaiveDateTime;
+use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
+use dotenv::dotenv;
+use std::env;
 use std::net::SocketAddr;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
@@ -132,8 +129,6 @@ async fn sync_record(
 ) -> impl IntoResponse {
     let ip_addr = body.ip_address;
     let time_synced = body.time_synced;
-    
-    
 
     let api_key = match headers
         .get("authorization")
@@ -245,7 +240,11 @@ async fn sync_record(
             Err(_) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json("Failed to get user token"),
+                    Json(SyncResponse {
+                        success: false,
+                        updated: false,
+                        message: "Failed to get user token".to_string(),
+                    }),
                 )
                     .into_response();
             }
@@ -275,7 +274,15 @@ async fn sync_record(
         {
             Ok(r) => r,
             Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(SyncResponse {
+                        success: false,
+                        updated: false,
+                        message: e.to_string(),
+                    }),
+                )
+                    .into_response();
             }
         };
 
@@ -285,7 +292,15 @@ async fn sync_record(
         let updated_dns_record_response_data: PutRecordResponse = match response {
             Ok(result) => result,
             Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(SyncResponse {
+                        success: false,
+                        updated: false,
+                        message: e.to_string(),
+                    }),
+                )
+                    .into_response();
             }
         };
 
