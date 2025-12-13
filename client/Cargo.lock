@@ -252,7 +252,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "drago-smallest"
+name = "drago"
 version = "0.1.0"
 dependencies = [
  "chrono",

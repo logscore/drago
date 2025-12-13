@@ -298,8 +298,8 @@
 						</div>
 					{/each}
 				{:else}
-					<div class="w-full rounded p-4">
-						<p>No API keys yet. Click "Add Key" to get started</p>
+					<div class="w-full p-4 text-sm text-neutral-500 italic">
+						<p>No API keys yet. Click "Add Key" to get started.</p>
 					</div>
 				{/if}
 			</div>

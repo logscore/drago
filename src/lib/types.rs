@@ -120,18 +120,6 @@ pub struct PutDnsRecordPayload<'a> {
     pub ttl: &'a i32,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DnsRecordsResponse {
-    pub result: Vec<DnsRecord>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ApiResponse<T> {
-    pub success: bool,
-    pub message: String,
-    pub data: T,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AddApiKey {
     pub name: String,

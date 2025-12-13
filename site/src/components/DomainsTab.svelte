@@ -254,7 +254,10 @@
 						{/each}
 					</div>
 				{:else}
-					<p class="text-sm text-neutral-500 italic">No records found for this zone.</p>
+					<p class="w-full p-4 text-sm text-neutral-500 italic">
+						No dynamic records for this zone yet. Click "Add Record" to get started managing records
+						dynamically.
+					</p>
 				{/if}
 			</div>
 		{/each}

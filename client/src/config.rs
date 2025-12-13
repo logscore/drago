@@ -82,7 +82,7 @@ pub fn load_config() -> io::Result<Config> {
     }
 
     let contents = fs::read_to_string(&config_path)?;
-    dbg!(&contents);
+
     let config: Config = serde_json::from_str(&contents)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 

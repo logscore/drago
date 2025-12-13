@@ -12,9 +12,7 @@ use axum::{
 };
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
-use diesel::result::Error as DieselError;
 use dotenv::dotenv;
-use reqwest::Client;
 
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
@@ -134,6 +132,8 @@ async fn sync_record(
 ) -> impl IntoResponse {
     let ip_addr = body.ip_address;
     let time_synced = body.time_synced;
+    
+    
 
     let api_key = match headers
         .get("authorization")
@@ -279,9 +279,10 @@ async fn sync_record(
             }
         };
 
-        let response = resp.json::<PutRecordResponse>().await;
+        let response = resp.json().await;
 
-        let updated_dns_record_response_data = match response {
+        dbg!(&response);
+        let updated_dns_record_response_data: PutRecordResponse = match response {
             Ok(result) => result,
             Err(e) => {
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())).into_response();
@@ -438,17 +439,11 @@ async fn list_dns_records(State(state): State<AppState>, User(claims): User) -> 
     let curr_user_id = claims.sub;
     let conn = &mut state.pool.get().expect("Failed to get DB connection");
 
-    let zones_result: Result<Vec<(String, String)>, DieselError> = dns_zone::table
+    let zones: Vec<(String, String)> = dns_zone::table
         .filter(dns_zone::user_id.eq(&curr_user_id))
         .select((dns_zone::id, dns_zone::zone_name))
-        .load::<(String, String)>(conn);
-
-    let zones = match zones_result {
-        Ok(rows) => rows,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Zone DB Error").into_response(),
-    };
-
-    let mut zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> = Vec::new();
+        .load(conn)
+        .unwrap_or_default();
 
     if zones.is_empty() {
         let token_data = dns_token::table
@@ -464,9 +459,7 @@ async fn list_dns_records(State(state): State<AppState>, User(claims): User) -> 
 
         let (token_id, ciphertext, nonce, tag) = match token_data {
             Ok(Some(data)) => data,
-            Ok(None) => {
-                return (StatusCode::NOT_FOUND, "No DNS Token found").into_response();
-            }
+            Ok(None) => return (StatusCode::NOT_FOUND, "No DNS Token found").into_response(),
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
         };
 
@@ -475,67 +468,62 @@ async fn list_dns_records(State(state): State<AppState>, User(claims): User) -> 
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Security Error").into_response(),
         };
 
-        zone_dns_data =
-            match initialize_zones(conn, &curr_user_id, &decrypted_token, &token_id).await {
-                Ok(data) => data,
-                Err(_) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Error fetching DNS Zones",
-                    )
-                        .into_response();
-                }
-            };
+        let zones = match initialize_zones(conn, &curr_user_id, &decrypted_token, &token_id).await {
+            Ok(z) => z,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Error fetching DNS Zones",
+                )
+                    .into_response()
+            }
+        };
+
+        let zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> =
+            zones.into_iter().map(|z| (z, Vec::new())).collect();
 
         return (StatusCode::OK, Json(&zone_dns_data)).into_response();
     }
 
-    // Existing DB logic
-    let raw_zones = match dns_zone::table
-        .filter(dns_zone::user_id.eq(&curr_user_id))
-        .select((dns_zone::id, dns_zone::zone_name))
-        .load::<(String, String)>(conn)
-    {
-        Ok(z) => z,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB Error").into_response(),
-    };
+    let zone_dns_data: Vec<(Zone, Vec<DnsRecord>)> = zones
+        .into_iter()
+        .map(|(z_id, z_name)| {
+            let records = dns_record::table
+                .filter(dns_record::zone_id.eq(&z_id))
+                .filter(dns_record::user_id.eq(&curr_user_id))
+                .select((
+                    dns_record::id,
+                    dns_record::record_name,
+                    dns_record::content,
+                    dns_record::ttl,
+                    dns_record::record_type,
+                    dns_record::proxied,
+                ))
+                .load::<(String, String, String, i32, String, bool)>(conn)
+                .unwrap_or_default()
+                .into_iter()
+                .map(
+                    |(r_id, r_name, r_content, r_ttl, r_type, r_proxied)| DnsRecord {
+                        id: r_id,
+                        name: r_name,
+                        content: r_content,
+                        ttl: r_ttl,
+                        record_type: r_type,
+                        proxied: r_proxied,
+                    },
+                )
+                .collect();
 
-    for (z_id, z_name) in raw_zones {
-        let raw_records = dns_record::table
-            .filter(dns_record::zone_id.eq(&z_id))
-            .select((
-                dns_record::id,
-                dns_record::record_name,
-                dns_record::content,
-                dns_record::ttl,
-                dns_record::record_type,
-                dns_record::proxied,
-            ))
-            .load::<(String, String, String, i32, String, bool)>(conn)
-            .unwrap_or_default();
-
-        let records_structs: Vec<DnsRecord> = raw_records
-            .into_iter()
-            .map(
-                |(r_id, r_name, r_content, r_ttl, r_type, r_proxied)| DnsRecord {
-                    id: r_id,
-                    name: r_name,
-                    content: r_content,
-                    ttl: r_ttl,
-                    record_type: r_type,
-                    proxied: r_proxied,
+            (
+                Zone {
+                    id: z_id,
+                    name: z_name,
+                    status: "active".to_string(),
                 },
+                records,
             )
-            .collect();
-
-        let zone_struct = Zone {
-            id: z_id,
-            name: z_name,
-            status: "active".to_string(),
-        };
-
-        zone_dns_data.push((zone_struct, records_structs));
-    }
+        })
+        .collect();
 
     (StatusCode::OK, Json(&zone_dns_data)).into_response()
 }
@@ -803,7 +791,7 @@ async fn initialize_zones(
     curr_user_id: &String,
     dns_access_token: &String,
     dns_access_token_id: &String,
-) -> Result<Vec<(Zone, Vec<DnsRecord>)>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Zone>, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
 
     let zones_resp = client
@@ -816,17 +804,8 @@ async fn initialize_zones(
     let data = zones_resp.json::<DnsZonesResponse>().await?;
     let zones = data.result;
 
-    let mut account_dns_records: Vec<(Zone, Vec<DnsRecord>)> = Vec::new();
-
-    for zone in zones {
-        let zone_records = fetch_zone_records(conn, curr_user_id, &client, zone).await;
-        if zone_records.success {
-            account_dns_records.push(zone_records.data);
-        }
-    }
-
-    if let Err(e) = conn.transaction(|conn| {
-        for (zone, records) in &account_dns_records {
+    conn.transaction(|conn| {
+        for zone in &zones {
             diesel::insert_into(dns_zone::table)
                 .values((
                     dns_zone::id.eq(&zone.id),
@@ -836,86 +815,9 @@ async fn initialize_zones(
                     dns_zone::last_synced_on.eq(chrono::Utc::now().naive_utc()),
                 ))
                 .execute(conn)?;
-
-            for record in records {
-                diesel::insert_into(dns_record::table)
-                    .values((
-                        dns_record::id.eq(&record.id),
-                        dns_record::user_id.eq(curr_user_id),
-                        dns_record::record_name.eq(&record.name),
-                        dns_record::zone_id.eq(&zone.id),
-                        dns_record::content.eq(&record.content),
-                        dns_record::ttl.eq(&record.ttl),
-                        dns_record::record_type.eq(&record.record_type),
-                        dns_record::proxied.eq(&record.proxied),
-                    ))
-                    .execute(conn)?;
-            }
         }
         Ok::<_, diesel::result::Error>(())
-    }) {
-        eprintln!("Failed to add DNS records to account: {:?}", e);
-    }
+    })?;
 
-    Ok(account_dns_records)
+    Ok(zones)
 }
-
-async fn fetch_zone_records(
-    conn: &mut MysqlConnection,
-    user_id: &String,
-    client: &Client,
-    zone: Zone,
-) -> ApiResponse<(Zone, Vec<DnsRecord>)> {
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
-        zone.id
-    );
-
-    let user_dns_token = match get_user_token(conn, &user_id) {
-        Ok(token) => token,
-        Err(e) => {
-            eprintln!("Error fetching user DNS token: {:?}", e);
-            return ApiResponse {
-                success: false,
-                message: "No DNS access token found".to_string(),
-                data: (zone, Vec::new()),
-            };
-        }
-    };
-
-    let resp = match client
-        .get(&url)
-        .bearer_auth(&user_dns_token)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("DNS provider request failed: {:?}", e);
-            return ApiResponse {
-                success: false,
-                message: "DNS provider request failed".to_string(),
-                data: (zone, Vec::new()),
-            };
-        }
-    };
-
-    match resp.json::<DnsRecordsResponse>().await {
-        Ok(d) => ApiResponse {
-            success: true,
-            message: "DNS records fetched successfully".to_string(),
-            data: (zone, d.result),
-        },
-        Err(e) => {
-            eprintln!("JSON parse error: {:?}", e);
-            ApiResponse {
-                success: false,
-                message: "Failed to parse DNS records".to_string(),
-                data: (zone, Vec::new()),
-            }
-        }
-    }
-}
-
-// TODO: Add some sort of sync function where we refetch from the DNS provider so that we have an updated list of the records.

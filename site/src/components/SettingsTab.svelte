@@ -194,8 +194,10 @@
 					</div>
 				{/each}
 			{:else}
-				<div class="w-full rounded p-4">
-					<p>No DNS providers yet.</p>
+				<div class="w-full p-4 text-sm text-neutral-500 italic">
+					<p>
+						No DNS providers yet. Click "Add Provider" to get started managing records dynamically.
+					</p>
 				</div>
 			{/if}
 		</div>

@@ -6,7 +6,6 @@ use std::time::Duration;
 
 const PID_FILE: &str = "/tmp/drago.pid";
 const LOG_OUT: &str = "/tmp/drago.out";
-const LOG_ERR: &str = "/tmp/drago.err";
 
 pub fn is_daemon_running() -> io::Result<bool> {
     if !fs::metadata(PID_FILE).is_ok() {
