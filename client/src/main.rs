@@ -17,7 +17,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Store API key securely
-    Login,
+    Init,
     /// Start the daemon
     Start,
     /// Stop the daemon
@@ -34,7 +34,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Login => match config::store_api_key() {
+        Commands::Init => match config::store_api_key() {
             Ok(()) => println!("✅ API key saved successfully"),
             Err(e) => {
                 eprintln!("❌ Failed to save API key: {}", e);

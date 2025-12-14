@@ -3,7 +3,7 @@ FROM rust AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release
+RUN CARGO_BUILD_JOBS=2 cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
