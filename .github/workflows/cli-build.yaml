@@ -43,6 +43,7 @@ jobs:
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
           DRAGO_API_URL: "https://api.dragodns.com"
+          DRAGO_FRONTEND_URL: "https://www.dragodns.com"
         run: |
           cargo zigbuild --release --target ${{ matrix.target }}
       - name: Package
