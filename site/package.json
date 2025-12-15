@@ -11,13 +11,14 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
-		"lint": "prettier --check .",
+		"lint": "oxlint .",
 		"db:push": "drizzle-kit push",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "drizzle-kit migrate",
 		"db:studio": "drizzle-kit studio"
 	},
 	"devDependencies": {
+		"@originjs/vite-plugin-commonjs": "^1.0.3",
 		"@skeletonlabs/skeleton": "^4.4.0",
 		"@skeletonlabs/skeleton-svelte": "^4.4.0",
 		"@sveltejs/adapter-node": "^5.4.0",
@@ -32,9 +33,11 @@
 		"prettier": "^3.6.2",
 		"prettier-plugin-svelte": "^3.4.0",
 		"prettier-plugin-tailwindcss": "^0.7.1",
+		"rollup-plugin-visualizer": "^6.0.5",
 		"svelte": "^5.41.0",
 		"svelte-check": "^4.3.3",
 		"tailwindcss": "^4.1.17",
+		"terser": "^5.44.1",
 		"typescript": "^5.9.3",
 		"vite": "^7.1.10"
 	},

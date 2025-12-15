@@ -8,8 +8,19 @@ RUN CARGO_BUILD_JOBS=2 cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 RUN apt update && apt install -y ca-certificates libmariadb3 && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user named drago
+RUN useradd --create-home --shell /bin/bash drago
+
 WORKDIR /app
 COPY --from=builder /app/target/release/drago-dns .
+
+# Change ownership of app directory to drago
+RUN chown -R drago:drago /app
+
+# Switch to drago user
+USER drago
+
 EXPOSE 8088
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
     CMD curl --fail http://localhost:8088/health || exit 1
