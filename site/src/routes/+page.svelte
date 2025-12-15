@@ -18,12 +18,12 @@
 			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="#pricing"
 				>Pricing</a
 			>
-			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="#docs"
+			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="/docs"
 				>Docs</a
 			>
 			<a
 				class="rounded bg-primary-500 px-4 py-2 text-white transition-colors hover:bg-primary-600"
-				href="#signup">Sign Up</a
+				href="/auth">Sign Up</a
 			>
 		</nav>
 	</div>
@@ -52,7 +52,7 @@
 			<div class="overflow-auto bg-surface-100 p-6 dark:bg-surface-800">
 				<pre class="text-sm leading-relaxed"><code
 						># Install the client
-curl -sSL https://dragodns.com/install.sh | sh
+curl -sSL https://www.dragodns.com/install.sh | sh
 
 # Add your DNS record API key
 drago init
@@ -116,7 +116,7 @@ drago start</code
 					<li>✓ Community support</li>
 				</ul>
 				<a
-					href="#signup"
+					href="/auth"
 					class="block w-full rounded border border-surface-300 px-4 py-2 transition-colors hover:bg-surface-100 dark:border-surface-600 dark:hover:bg-surface-800"
 					>Get Started</a
 				>
