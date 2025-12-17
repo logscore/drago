@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { mysqlTable, varchar, text, timestamp, boolean, index } from 'drizzle-orm/mysql-core';
+import { mysqlTable, varchar, text, timestamp, boolean, index, int } from 'drizzle-orm/mysql-core';
 
 export const user = mysqlTable('user', {
 	id: varchar('id', { length: 36 }).primaryKey(),
@@ -79,6 +79,19 @@ export const jwks = mysqlTable('jwks', {
 	privateKey: text('private_key').notNull(),
 	createdAt: timestamp('created_at', { fsp: 3 }).notNull(),
 	expiresAt: timestamp('expires_at', { fsp: 3 })
+});
+
+export const deviceCode = mysqlTable('device_code', {
+	id: varchar('id', { length: 36 }).primaryKey(),
+	deviceCode: text('device_code').notNull(),
+	userCode: text('user_code').notNull(),
+	userId: text('user_id'),
+	expiresAt: timestamp('expires_at', { fsp: 3 }).notNull(),
+	status: text('status').notNull(),
+	lastPolledAt: timestamp('last_polled_at', { fsp: 3 }),
+	pollingInterval: int('polling_interval'),
+	clientId: text('client_id'),
+	scope: text('scope')
 });
 
 export const userRelations = relations(user, ({ many }) => ({

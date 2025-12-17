@@ -3,7 +3,7 @@ import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from '../server/db/index';
-import { jwt } from 'better-auth/plugins';
+import { jwt, deviceAuthorization } from 'better-auth/plugins';
 
 export const auth = betterAuth({
 	database: drizzleAdapter(db, {
@@ -13,6 +13,12 @@ export const auth = betterAuth({
 		enabled: true,
 		autoSignIn: true
 	},
-	plugins: [jwt(), sveltekitCookies(getRequestEvent)],
+	plugins: [
+		jwt(),
+		sveltekitCookies(getRequestEvent),
+		deviceAuthorization({
+			verificationUri: '/device'
+		})
+	],
 	telemetry: { enabled: false }
 });

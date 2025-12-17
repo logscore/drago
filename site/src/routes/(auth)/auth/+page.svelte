@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { authClient } from '$lib/auth/authClient';
 	import { Tabs } from '@skeletonlabs/skeleton-svelte';
 
@@ -9,6 +10,17 @@
 	let name = $state('');
 	let loading = $state(false);
 	let error = $state('');
+	let redirectUrl = $state('/dashboard');
+
+	$effect(() => {
+		const redirect_search_param = page.url.searchParams.get('redirect_url');
+
+		console.log(redirect_search_param);
+
+		if (redirect_search_param) {
+			redirectUrl = redirect_search_param;
+		}
+	});
 
 	async function handleSubmit() {
 		loading = true;
@@ -20,12 +32,11 @@
 					{
 						email,
 						password,
-						callbackURL: '/dashboard',
 						rememberMe: true
 					},
 					{
 						onSuccess() {
-							goto('/dashboard');
+							goto(`${redirectUrl}`);
 						},
 						onError(ctx) {
 							error = ctx.error.message;
@@ -37,12 +48,11 @@
 					{
 						email: email,
 						name: name,
-						password: password,
-						callbackURL: '/'
+						password: password
 					},
 					{
 						onSuccess() {
-							goto('/dashboard');
+							goto(`${redirectUrl}`);
 						},
 						onError(ctx) {
 							error = ctx.error.message;
@@ -61,8 +71,12 @@
 <div class="mx-auto mt-16 max-w-90 card p-6">
 	<Tabs {value} onValueChange={(details) => (value = details.value)}>
 		<Tabs.List>
-			<Tabs.Trigger class="flex-1" value="signin">Sign In</Tabs.Trigger>
-			<Tabs.Trigger class="flex-1" value="signup">Sign Up</Tabs.Trigger>
+			<Tabs.Trigger class="flex-1 hover:bg-neutral-800 hover:text-neutral-100" value="signin"
+				>Sign In</Tabs.Trigger
+			>
+			<Tabs.Trigger class="flex-1 hover:bg-neutral-800 hover:text-neutral-100" value="signup"
+				>Sign Up</Tabs.Trigger
+			>
 			<Tabs.Indicator />
 		</Tabs.List>
 

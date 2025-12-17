@@ -160,7 +160,7 @@ async fn sync_record(
                 Json(SyncResponse {
                     success: false,
                     updated: false,
-                    message: "No API key provided".to_string(),
+                    message: "Malformed API key.".to_string(),
                 }),
             )
                 .into_response();

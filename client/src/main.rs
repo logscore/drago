@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Store API key securely
+    /// Initialize device authorization
     Init,
     /// Start the daemon
     Start,
@@ -34,10 +34,10 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init => match config::store_api_key() {
-            Ok(()) => println!("✅ API key saved successfully"),
+        Commands::Init => match config::store_device_token() {
+            Ok(()) => println!("✅ Device authorization completed successfully"),
             Err(e) => {
-                eprintln!("❌ Failed to save API key: {}", e);
+                eprintln!("❌ Failed to complete device authorization: {}", e);
                 process::exit(1);
             }
         },

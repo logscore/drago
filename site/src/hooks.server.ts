@@ -10,7 +10,27 @@ export async function handle({ event, resolve }) {
 		});
 
 		if (!session) {
-			return Response.redirect(new URL('/', event.url), 302);
+			return Response.redirect(new URL('/auth', event.url), 302);
+		}
+	}
+
+	if (event.url.pathname.startsWith('/device')) {
+		const session = await auth.api.getSession({
+			headers: event.request.headers
+		});
+
+		if (!session) {
+			return Response.redirect(new URL(`/auth?redirect_url=/device`, event.url), 302);
+		}
+	}
+
+	if (event.url.pathname.startsWith('/auth')) {
+		const session = await auth.api.getSession({
+			headers: event.request.headers
+		});
+
+		if (session) {
+			return Response.redirect(new URL('/dashboard', event.url), 302);
 		}
 	}
 

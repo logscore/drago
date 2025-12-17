@@ -30,7 +30,7 @@ No other process downloads, bundles, or reaches external binaries.
 
 ### Binary entry points
 
-drago login # prompt to securely store API key
+drago init # start device authorization flow
 drago start # start daemon (forks itself)
 drago stop # stops daemon (by PID)
 drago status # show daemon state
@@ -63,12 +63,14 @@ Config: ~/.config/drago/config.json
 
 ## Command Definitions
 
-### login
+### init
 
-1. Prompt user for API key (no echo input, use rpassword crate).
-2. Create ~/.config/drago if missing.
-3. Save { "api_key": "<KEY>" } JSON to config file (0600 perms).
-4. Print confirmation message.
+1. Start OAuth 2.0 Device Authorization flow.
+2. Request device code from better-auth API endpoint.
+3. Display user code and open browser for verification.
+4. Poll for access token until user approves/denies.
+5. Save { "access_token": "<TOKEN>", "token_type": "Bearer" } JSON to config file (0600 perms).
+6. Print confirmation message.
 
 ### start
 

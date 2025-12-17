@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    pub api_key: String,
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_at: Option<chrono::NaiveDateTime>,
 }
 
 fn get_home_dir() -> io::Result<PathBuf> {
@@ -23,15 +25,18 @@ pub fn get_config_path() -> PathBuf {
     config_path
 }
 
-pub fn store_api_key() -> io::Result<()> {
-    let api_key = rpassword::prompt_password("Enter your API key: ")?;
+pub fn store_device_token() -> io::Result<()> {
+    println!("Starting device authorization flow...");
 
-    if api_key.trim().is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "API key cannot be empty",
-        ));
-    }
+    let access_token = match crate::api::authenticate_with_device_flow() {
+        Ok(token) => token,
+        Err(e) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Device authorization failed: {}", e),
+            ));
+        }
+    };
 
     let config_path = get_config_path();
     let parent_dir = config_path
@@ -44,8 +49,13 @@ pub fn store_api_key() -> io::Result<()> {
         fs::create_dir_all(parent_dir)?;
     }
 
-    // Write config JSON
-    let config = Config { api_key };
+    // Write config JSON with access token
+    let config = Config {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_at: None, // Could implement token refresh in future
+    };
+
     let data = serde_json::to_string_pretty(&config)?;
     fs::write(&config_path, data)?;
 
@@ -60,7 +70,7 @@ pub fn store_api_key() -> io::Result<()> {
 
     // Verification and helpful output
     if config_path.exists() {
-        println!("✅ Config saved to {}", config_path.display());
+        println!("✅ Access token saved to {}", config_path.display());
     } else {
         eprintln!(
             "❌ Failed to verify config creation at {}",
