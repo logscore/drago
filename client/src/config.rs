@@ -8,6 +8,7 @@ pub struct Config {
     pub access_token: String,
     pub token_type: String,
     pub expires_at: Option<chrono::NaiveDateTime>,
+    pub api_key: Option<String>,
 }
 
 fn get_home_dir() -> io::Result<PathBuf> {
@@ -49,11 +50,15 @@ pub fn store_device_token() -> io::Result<()> {
         fs::create_dir_all(parent_dir)?;
     }
 
+    // Load existing config or create new one
+    let api_key = load_config().ok().and_then(|c| c.api_key);
+
     // Write config JSON with access token
     let config = Config {
         access_token,
         token_type: "Bearer".to_string(),
         expires_at: None, // Could implement token refresh in future
+        api_key,
     };
 
     let data = serde_json::to_string_pretty(&config)?;
@@ -87,7 +92,10 @@ pub fn load_config() -> io::Result<Config> {
     if !config_path.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Config file not found at {}", config_path.display()),
+            format!(
+                "Config file not found at {}. Run 'drago init' first.",
+                config_path.display()
+            ),
         ));
     }
 
@@ -97,4 +105,30 @@ pub fn load_config() -> io::Result<Config> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     Ok(config)
+}
+
+/// Save an API key to the config file (preserves existing access token)
+pub fn save_api_key(api_key: &str) -> io::Result<()> {
+    let config_path = get_config_path();
+
+    // Load existing config
+    let mut config = load_config()?;
+
+    // Update API key
+    config.api_key = Some(api_key.to_string());
+
+    // Write back
+    let data = serde_json::to_string_pretty(&config)?;
+    fs::write(&config_path, data)?;
+
+    // Ensure secure file permissions
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&config_path)?.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&config_path, perms)?;
+    }
+
+    Ok(())
 }
