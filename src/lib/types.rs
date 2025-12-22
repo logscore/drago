@@ -116,7 +116,7 @@ pub struct DnsRecordPayload<'a> {
 pub struct PutDnsRecordPayload<'a> {
     pub r#type: &'a String,
     pub name: &'a String,
-    pub content: &'a String,
+    pub content: &'a str,
     pub ttl: &'a i32,
 }
 

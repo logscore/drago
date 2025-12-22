@@ -1,9 +1,9 @@
 use axum::{
     extract::{FromRef, FromRequestParts},
-    http::{StatusCode, header::AUTHORIZATION, request::Parts},
+    http::{header::AUTHORIZATION, request::Parts, StatusCode},
 };
 use jsonwebtoken::decode_header;
-use rand::{Rng, distr::Alphanumeric};
+use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 // Base64 engine for URL-safe decoding
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 // 1. The Claims struct (What is inside the token)
 #[derive(Debug, Deserialize, Clone)]
@@ -57,7 +57,7 @@ impl AuthState {
         }
     }
 
-    async fn get_key(&self, kid: &str) -> Result<ed25519_dalek::VerifyingKey, String> {
+    pub async fn get_key(&self, kid: &str) -> Result<ed25519_dalek::VerifyingKey, String> {
         // Check cache first
         {
             let store = self.keystore.read().await;
@@ -148,7 +148,7 @@ where
         // Parse JWT manually for Ed25519 verification
         let parts: Vec<&str> = token.split('.').collect();
         if parts.len() != 3 {
-            return Err((StatusCode::UNAUTHORIZED, "Invalid JWT format".into()));
+            return Err((StatusCode::UNAUTHORIZED, "Invalid auth token format".into()));
         }
 
         let header_b64 = parts[0];

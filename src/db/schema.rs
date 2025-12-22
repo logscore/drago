@@ -28,6 +28,8 @@ diesel::table! {
         user_id -> Varchar,
         #[max_length = 255]
         name -> Varchar,
+        #[max_length = 20]
+        prefix_id -> Varchar,
         #[max_length = 97]
         key_hash -> Varchar,
         #[max_length = 255]
@@ -35,8 +37,23 @@ diesel::table! {
         last_used -> Nullable<Timestamp>,
         created_on -> Timestamp,
         updated_on -> Timestamp,
-        #[max_length = 20]
-        prefix_id -> Varchar,
+    }
+}
+
+diesel::table! {
+    device_code (id) {
+        #[max_length = 36]
+        id -> Varchar,
+        #[sql_name = "device_code"]
+        device_code_value -> Text,
+        user_code -> Text,
+        user_id -> Nullable<Text>,
+        expires_at -> Timestamp,
+        status -> Text,
+        last_polled_at -> Nullable<Timestamp>,
+        polling_interval -> Nullable<Integer>,
+        client_id -> Nullable<Text>,
+        scope -> Nullable<Text>,
     }
 }
 
@@ -161,6 +178,7 @@ diesel::joinable!(session -> user (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     account,
     api_keys,
+    device_code,
     dns_record,
     dns_token,
     dns_zone,

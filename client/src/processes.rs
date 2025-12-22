@@ -1,5 +1,6 @@
+use crate::config;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -36,6 +37,37 @@ pub fn start_daemon() -> io::Result<()> {
             io::ErrorKind::AlreadyExists,
             "Daemon already running",
         ));
+    }
+
+    // Check if API key is configured
+    let cfg = config::load_config()?;
+    if cfg.api_key.is_none() {
+        println!("⚠️  No API key configured.");
+        println!("   Run 'drago setup' to create a DNS record and API key, or enter one now.");
+        print!("\n🔑 Enter your API key: ");
+        io::stdout().flush()?;
+
+        let mut api_key = String::new();
+        io::stdin().read_line(&mut api_key)?;
+        let api_key = api_key.trim().to_string();
+
+        if api_key.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "API key is required to start the daemon",
+            ));
+        }
+
+        if !api_key.starts_with("dgo_") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid API key format. Expected dgo_<prefix>_<secret>",
+            ));
+        }
+
+        // Save the API key
+        config::save_api_key(&api_key)?;
+        println!("✅ API key saved!");
     }
 
     let exe = std::env::current_exe()?;

@@ -150,6 +150,29 @@ async fn sync_record(
         }
     };
 
+    // Only accept API keys (format: dgo_<prefix>_<secret>)
+    if !api_key.starts_with("dgo_") {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(SyncResponse {
+                success: false,
+                updated: false,
+                message: "Invalid API key format. Expected dgo_<prefix>_<secret>".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    sync_with_api_key(&state, api_key, &ip_addr, &time_synced).await
+}
+
+/// Sync using API key - updates the specific record linked to the key
+async fn sync_with_api_key(
+    state: &AppState,
+    api_key: &str,
+    ip_addr: &str,
+    time_synced: &NaiveDateTime,
+) -> axum::response::Response {
     let key_parts: Vec<&str> = api_key.split("_").collect();
 
     let public_prefix = match key_parts.get(1) {
@@ -205,7 +228,7 @@ async fn sync_record(
             dns_record::ttl,
             dns_record::record_type,
         ))
-        .first::<PutDnsRecord>(conn);
+        .first::<models::PutDnsRecord>(conn);
 
     let connected_record_data = match connected_record {
         Ok(data) => data,
@@ -261,7 +284,7 @@ async fn sync_record(
             r#type: &connected_record_data.record_type,
             name: &connected_record_data.record_name,
             // The content is all that really changes in this call
-            content: &ip_addr,
+            content: ip_addr,
             ttl: &connected_record_data.ttl,
         };
 
@@ -307,8 +330,8 @@ async fn sync_record(
         if updated_dns_record_response_data.success {
             let update_result = diesel::update(dns_record::table)
                 .set((
-                    dns_record::content.eq(&ip_addr),
-                    dns_record::last_synced_on.eq(&time_synced),
+                    dns_record::content.eq(ip_addr),
+                    dns_record::last_synced_on.eq(time_synced),
                 ))
                 .filter(dns_record::user_id.eq(&connected_record_data.user_id))
                 .filter(dns_record::id.eq(&updated_dns_record_response_data.result.id))
