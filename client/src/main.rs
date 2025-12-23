@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize device authorization (get JWT token)
+    /// Initialize device authorization
     Init,
     /// Start the daemon
     Start,
@@ -26,12 +26,14 @@ enum Commands {
     Status,
     /// Restart the daemon
     Restart,
+    #[command(hide = true)]
     /// Internal command: runs the daemon (do not call directly)
     Daemon,
     /// List available DNS zones
     Zones,
     /// List DNS records
     Records,
+    #[command(hide = true)]
     /// Create a DNS record and get an API key for syncing
     Add {
         /// Zone ID to add the record to, found with drago zones
@@ -44,6 +46,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 300)]
         ttl: i32,
     },
+    #[command(hide = true)]
     /// Delete a DNS record
     Remove {
         /// Record ID to delete
@@ -181,10 +184,10 @@ fn main() {
         },
         Commands::Setup { zone, name } => match api::setup_record_with_key(&zone, &name) {
             Ok((record_name, api_key)) => {
-                println!("✅ Setup complete!");
-                println!("📍 DNS Record: {}", record_name);
-                println!("\n🚀 Run 'drago start' to begin syncing your IP!");
-                println!("   You will be prompted to enter the API key below.\n");
+                println!("Setup complete!");
+                println!("   DNS Record: {}", record_name);
+                println!("\nRun 'drago start' to begin syncing your IP!");
+                println!("   You will be prompted to enter the API key.\n");
 
                 // Show the API key once (user should save it)
                 println!("⚠️  Your API key (save this, it won't be shown again):");

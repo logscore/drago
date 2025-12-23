@@ -512,12 +512,76 @@ fn add_api_key(name: &str, record_id: &str) -> Result<String, Box<dyn std::error
     Ok(api_key)
 }
 
+#[derive(Deserialize, Debug)]
+pub struct DnsAccessToken {
+    pub id: String,
+    pub name: String,
+    pub created_on: chrono::NaiveDateTime,
+}
+
+/// Get existing Cloudflare access tokens from the API
+pub fn get_cloudflare_tokens(
+    jwt_token: &str,
+) -> Result<Vec<DnsAccessToken>, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let api_url = get_api_url();
+
+    let resp = client
+        .get(&format!("{}/access_tokens", api_url))
+        .bearer_auth(jwt_token)
+        .timeout(Duration::from_secs(30))
+        .send()?;
+
+    if !resp.status().is_success() {
+        let text = resp.text()?;
+        return Err(format!("Failed to get Cloudflare tokens: {}", text).into());
+    }
+
+    let tokens: Vec<DnsAccessToken> = resp.json()?;
+    Ok(tokens)
+}
+
+/// Store Cloudflare access token in the API
+pub fn store_cloudflare_token(
+    jwt_token: &str,
+    token_name: &str,
+    cloudflare_token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let api_url = get_api_url();
+
+    #[derive(Serialize)]
+    struct StoreTokenRequest {
+        name: String,
+        token: String,
+    }
+
+    let request = StoreTokenRequest {
+        name: token_name.to_string(),
+        token: cloudflare_token.to_string(),
+    };
+
+    let resp = client
+        .post(&format!("{}/access_token", api_url))
+        .bearer_auth(jwt_token)
+        .json(&request)
+        .timeout(Duration::from_secs(30))
+        .send()?;
+
+    if !resp.status().is_success() {
+        let text = resp.text()?;
+        return Err(format!("Failed to store Cloudflare token: {}", text).into());
+    }
+
+    Ok(())
+}
+
 /// Setup: create a DNS record and API key (does NOT auto-save the key)
 pub fn setup_record_with_key(
     zone_id: &str,
     subdomain: &str,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    println!("📍 Creating DNS record...");
+    println!("Creating DNS record...");
     let ttl = 300;
 
     // First, create the record
