@@ -18,6 +18,8 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<title>Dashboard — DragoDNS</title>
+	<meta name="description" content="The dashboard for DragoDNS" />
 </svelte:head>
 
 <QueryClientProvider client={queryClient}>

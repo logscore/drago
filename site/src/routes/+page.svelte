@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AppBar } from '@skeletonlabs/skeleton-svelte';
+	import Header from '../components/Header.svelte';
 </script>
 
 <svelte:head>
@@ -7,28 +7,7 @@
 	<meta name="description" content="Reliable dynamic DNS for remote access with instant updates." />
 </svelte:head>
 
-<!-- Header -->
-<AppBar>
-	<div class="container mx-auto flex items-center justify-between px-4">
-		<div class="text-xl font-bold">DragoDNS</div>
-		<nav class="flex gap-3">
-			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="#features"
-				>Features</a
-			>
-			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="#pricing"
-				>Pricing</a
-			>
-			<a class="rounded px-3 py-2 hover:bg-surface-100 dark:hover:bg-surface-800" href="/docs"
-				>Docs</a
-			>
-			<a
-				class="rounded bg-primary-500 px-4 py-2 text-white transition-colors hover:bg-primary-600"
-				href="/auth">Sign Up</a
-			>
-		</nav>
-	</div>
-</AppBar>
-
+<Header />
 <main class="container mx-auto px-4">
 	<!-- Hero -->
 	<section class="grid items-center gap-8 py-16 md:grid-cols-2">
@@ -54,8 +33,14 @@
 						># Install the client
 curl -sSL https://www.dragodns.com/install.sh | sh
 
-# Add your DNS record API key
-drago init
+# Authenticate your machine
+drago login
+
+# Find your domain ID
+drago zones
+
+# Create a record to manage
+drago add --zone [ID] --name [Record Name]
 
 # Start the daemon
 drago start</code
@@ -122,21 +107,42 @@ drago start</code
 				>
 			</div>
 
-			<div class="rounded-xl border border-surface-200 p-6 text-center dark:border-surface-700">
-				<h3 class="mb-2 text-xl font-bold">Pro</h3>
-				<p class="mb-4 text-3xl font-bold">
-					$1<span class="text-lg text-surface-600 dark:text-surface-400">/record</span>
-				</p>
-				<ul class="mb-6 space-y-2 text-left">
-					<li>✓ More records</li>
-					<li>✓ Priority updates</li>
-					<li>✓ Email support</li>
-				</ul>
-				<a
-					href="/auth"
-					class="block w-full rounded bg-primary-500 px-4 py-2 text-white transition-colors hover:bg-primary-600"
-					>Go Pro</a
+			<div
+				class="relative overflow-hidden rounded-xl border-2 border-dashed border-yellow-400 p-6 text-center"
+			>
+				<!-- Dimmed Content -->
+				<div class="pointer-events-none opacity-30 grayscale">
+					<h3 class="mb-2 text-xl font-bold">Pro</h3>
+					<p class="mb-4 text-3xl font-bold">
+						$1<span class="text-lg text-surface-600 dark:text-surface-400">/record</span>
+					</p>
+					<ul class="mb-6 space-y-2 text-left">
+						<li>✓ More records</li>
+						<li>✓ Priority updates</li>
+						<li>✓ Email support</li>
+					</ul>
+					<div class="block w-full rounded bg-primary-500 px-4 py-2 text-white">Go Pro</div>
+				</div>
+
+				<!-- Crossed Caution Tapes -->
+				<div
+					class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"
 				>
+					<!-- Tape 1 (Forward Slash) -->
+					<div
+						class="absolute h-10 w-[140%] rotate-15 border-y-2 border-yellow-400 bg-[repeating-linear-gradient(45deg,#000,#000_20px,#eab308_20px,#eab308_40px)] shadow-xl"
+					></div>
+					<!-- Tape 2 (Back Slash) -->
+					<div
+						class="absolute flex h-10 w-[140%] -rotate-15 items-center justify-center border-y-2 border-yellow-400 bg-[repeating-linear-gradient(-45deg,#000,#000_20px,#eab308_20px,#eab308_40px)] shadow-xl"
+					>
+						<span
+							class="bg-black px-3 py-0.5 text-xs font-black tracking-widest text-yellow-400 uppercase outline outline-yellow-400"
+						>
+							Coming Soon — For now, enjoy unlimited DDNS
+						</span>
+					</div>
+				</div>
 			</div>
 		</div>
 	</section>

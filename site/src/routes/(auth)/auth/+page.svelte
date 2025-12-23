@@ -1,8 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
 	import { authClient } from '$lib/auth/authClient';
 	import { Tabs } from '@skeletonlabs/skeleton-svelte';
+
+	interface AuthPageProps {
+		redirectUrl?: string;
+	}
+
+	let { data }: { data: AuthPageProps } = $props();
 
 	let value = $state('signin');
 	let email = $state('');
@@ -10,55 +15,29 @@
 	let name = $state('');
 	let loading = $state(false);
 	let error = $state('');
-	let redirectUrl = $state('/dashboard');
 
-	$effect(() => {
-		const redirect_search_param = page.url.searchParams.get('redirect_url');
-
-		console.log(redirect_search_param);
-
-		if (redirect_search_param) {
-			redirectUrl = redirect_search_param;
-		}
-	});
+	// Use $derived so Svelte tracks changes to data.redirectUrl
+	const destination = $state(data.redirectUrl || '/dashboard');
 
 	async function handleSubmit() {
 		loading = true;
 		error = '';
 
+		const options = {
+			onSuccess() {
+				// Use the resolved destination
+				goto(destination);
+			},
+			onError(ctx: any) {
+				error = ctx.error.message;
+			}
+		};
+
 		try {
 			if (value === 'signin') {
-				await authClient.signIn.email(
-					{
-						email,
-						password,
-						rememberMe: true
-					},
-					{
-						onSuccess() {
-							goto(`${redirectUrl}`);
-						},
-						onError(ctx) {
-							error = ctx.error.message;
-						}
-					}
-				);
+				await authClient.signIn.email({ email, password, rememberMe: true }, options);
 			} else {
-				await authClient.signUp.email(
-					{
-						email: email,
-						name: name,
-						password: password
-					},
-					{
-						onSuccess() {
-							goto(`${redirectUrl}`);
-						},
-						onError(ctx) {
-							error = ctx.error.message;
-						}
-					}
-				);
+				await authClient.signUp.email({ email, name, password }, options);
 			}
 		} catch (err) {
 			error = 'Unexpected error, try again.';
