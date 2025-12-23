@@ -63,7 +63,7 @@
 				</div>
 				<div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 font-mono text-sm">
 					<p class="mb-2 text-neutral-600">// 2. Create record and config</p>
-					<code class="text-neutral-300">drago add --zone [ID] --name [Record Name]</code>
+					<code class="text-neutral-300">drago setup --zone [ID] --name [Record Name]</code>
 				</div>
 			</div>
 		</section>
@@ -85,6 +85,6 @@
 	</div>
 
 	<footer class="border-t pt-6 text-sm text-neutral-500">
-		<p>Commands: login | add | remove | zones | records | start | stop | status | restart</p>
+		<p>Commands: login | zones | records | start | stop | status | restart</p>
 	</footer>
 </div>

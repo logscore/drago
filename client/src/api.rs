@@ -512,12 +512,76 @@ fn add_api_key(name: &str, record_id: &str) -> Result<String, Box<dyn std::error
     Ok(api_key)
 }
 
+#[derive(Deserialize, Debug)]
+pub struct DnsAccessToken {
+    pub id: String,
+    pub name: String,
+    pub created_on: chrono::NaiveDateTime,
+}
+
+/// Get existing Cloudflare access tokens from the API
+pub fn get_cloudflare_tokens(
+    jwt_token: &str,
+) -> Result<Vec<DnsAccessToken>, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let api_url = get_api_url();
+
+    let resp = client
+        .get(&format!("{}/access_tokens", api_url))
+        .bearer_auth(jwt_token)
+        .timeout(Duration::from_secs(30))
+        .send()?;
+
+    if !resp.status().is_success() {
+        let text = resp.text()?;
+        return Err(format!("Failed to get Cloudflare tokens: {}", text).into());
+    }
+
+    let tokens: Vec<DnsAccessToken> = resp.json()?;
+    Ok(tokens)
+}
+
+/// Store Cloudflare access token in the API
+pub fn store_cloudflare_token(
+    jwt_token: &str,
+    token_name: &str,
+    cloudflare_token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let api_url = get_api_url();
+
+    #[derive(Serialize)]
+    struct StoreTokenRequest {
+        name: String,
+        token: String,
+    }
+
+    let request = StoreTokenRequest {
+        name: token_name.to_string(),
+        token: cloudflare_token.to_string(),
+    };
+
+    let resp = client
+        .post(&format!("{}/access_token", api_url))
+        .bearer_auth(jwt_token)
+        .json(&request)
+        .timeout(Duration::from_secs(30))
+        .send()?;
+
+    if !resp.status().is_success() {
+        let text = resp.text()?;
+        return Err(format!("Failed to store Cloudflare token: {}", text).into());
+    }
+
+    Ok(())
+}
+
 /// Setup: create a DNS record and API key (does NOT auto-save the key)
 pub fn setup_record_with_key(
     zone_id: &str,
     subdomain: &str,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    println!("📍 Creating DNS record...");
+    println!("Creating DNS record...");
     let ttl = 300;
 
     // First, create the record
@@ -538,4 +602,190 @@ pub fn setup_record_with_key(
     println!("   API key created");
 
     Ok((record_name, api_key))
+}
+
+/// Prompt user for zone selection
+pub fn prompt_for_zone_selection() -> Result<(String, String), Box<dyn std::error::Error>> {
+    let zones = list_zones()?;
+
+    if zones.is_empty() {
+        return Err("No DNS zones found. Make sure you have added a Cloudflare token.".into());
+    }
+
+    println!("\n📋 Available DNS Zones:");
+    for (i, (_, zone_name)) in zones.iter().enumerate() {
+        println!("  {}. {}", i + 1, zone_name);
+    }
+
+    loop {
+        print!("Enter the number of the zone to use: ");
+        io::stdout().flush().ok();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        match input.trim().parse::<usize>() {
+            Ok(index) if index > 0 && index <= zones.len() => {
+                return Ok((zones[index - 1].0.clone(), zones[index - 1].1.clone()));
+            }
+            _ => {
+                println!(
+                    "Invalid selection. Please enter a number between 1 and {}",
+                    zones.len()
+                );
+            }
+        }
+    }
+}
+
+/// Prompt user for record name
+pub fn prompt_for_record_name() -> Result<String, Box<dyn std::error::Error>> {
+    loop {
+        print!("Enter the subdomain name (e.g., 'home' for home.example.com): ");
+        io::stdout().flush().ok();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        let name = input.trim().to_string();
+        if !name.is_empty() {
+            return Ok(name);
+        }
+
+        println!("Subdomain name cannot be empty. Please try again.");
+    }
+}
+
+/// Complete initialization flow
+pub fn complete_init_flow() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Starting DragoDNS initialization...");
+
+    // Check if already authenticated
+    let is_authenticated = config::load_config().is_ok();
+
+    if !is_authenticated {
+        println!("🔐 Authentication required...");
+        let access_token = authenticate_with_device_flow()?;
+
+        // Store access token
+        let config_path = config::get_config_path();
+        let parent_dir = config_path.parent().ok_or("Invalid config path")?;
+
+        // Ensure directory exists
+        if !parent_dir.exists() {
+            std::fs::create_dir_all(parent_dir)?;
+        }
+
+        let config = config::Config {
+            access_token: access_token.clone(),
+            token_type: "Bearer".to_string(),
+            expires_at: None,
+            api_key: None,
+        };
+
+        let data = serde_json::to_string_pretty(&config)?;
+        std::fs::write(&config_path, data)?;
+
+        // Ensure secure file permissions
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&config_path)?.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&config_path, perms)?;
+        }
+
+        // Handle Cloudflare token setup
+        println!("\n🔐 Cloudflare Access Token");
+        match get_cloudflare_tokens(&access_token) {
+            Ok(existing_tokens) => {
+                if !existing_tokens.is_empty() {
+                    println!("Found existing Cloudflare access tokens:");
+                    for token in &existing_tokens {
+                        println!(
+                            "  - {} (created: {})",
+                            token.name,
+                            token.created_on.format("%Y-%m-%d %H:%M:%S")
+                        );
+                    }
+
+                    print!("\nDo you want to add a new token? (y/N): ");
+                    io::stdout().flush().ok();
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    if !input.trim().to_lowercase().starts_with('y') {
+                        println!("✅ Using existing Cloudflare token(s)");
+                    } else {
+                        prompt_and_store_token(&access_token)?;
+                    }
+                } else {
+                    println!("No existing Cloudflare access tokens found.");
+                    prompt_and_store_token(&access_token)?;
+                }
+            }
+            Err(e) => {
+                println!("⚠️  Could not check existing tokens: {}", e);
+                prompt_and_store_token(&access_token)?;
+            }
+        }
+    } else {
+        println!("✅ Already authenticated");
+    }
+
+    println!("\n📋 We will add a DNS record to sync");
+
+    // Prompt for zone selection
+    let zone_id = prompt_for_zone_selection()?;
+    println!("✅ Selected zone: {}", zone_id.1);
+
+    // Prompt for record name
+    let record_name = prompt_for_record_name()?;
+    println!("✅ Record name: {}", record_name);
+
+    // Create record and API key
+    let (full_record_name, api_key) = setup_record_with_key(&zone_id.0, &record_name)?;
+
+    // Store API key in config
+    config::save_api_key(&api_key)?;
+    println!("✅ API key saved to config");
+
+    println!("\n🎉 Setup complete!");
+    println!("   DNS Record: {}", full_record_name);
+    println!("   Starting daemon...");
+
+    // Start the daemon
+    match crate::processes::start_daemon() {
+        Ok(()) => println!("✅ Daemon started successfully"),
+        Err(e) => {
+            eprintln!("❌ Failed to start daemon: {}", e);
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
+fn prompt_and_store_token(access_token: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Prompt for token name
+    print!("Enter a name for this token (e.g., 'Cloudflare Production'): ");
+    io::stdout().flush().ok();
+
+    let mut token_name = String::new();
+    io::stdin().read_line(&mut token_name)?;
+    let token_name = token_name.trim().to_string();
+
+    if token_name.is_empty() {
+        return Err("Token name cannot be empty".into());
+    }
+
+    // Prompt for Cloudflare access token
+    let cloudflare_token = rpassword::prompt_password("Enter your Cloudflare API token: ")?;
+
+    // Send Cloudflare token to API
+    store_cloudflare_token(access_token, &token_name, &cloudflare_token)?;
+    println!("✅ Cloudflare token '{}' stored securely", token_name);
+
+    Ok(())
 }

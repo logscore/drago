@@ -2,20 +2,17 @@ mod db;
 mod lib;
 
 use crate::{
-    db::{models::NewDnsAccessToken, *},
-    lib::auth::{generate_api_key, AuthState},
-};
-use crate::{
-    db::{
-        models::PutDnsRecord,
-        schema::{api_keys, dns_record, dns_token, dns_zone},
-    },
+    db::schema::{api_keys, dns_record, dns_token, dns_zone},
     lib::{
         auth::User,
         encryption::{decrypt, encrypt},
         types::*,
         utils::{get_user_token, hash_raw_string},
     },
+};
+use crate::{
+    db::{models::NewDnsAccessToken, *},
+    lib::auth::{generate_api_key, AuthState},
 };
 use axum::{
     extract::{FromRef, Query, State},
