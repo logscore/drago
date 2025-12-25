@@ -33,14 +33,8 @@
 						># Install the client
 curl -sSL https://www.dragodns.com/install.sh | sh
 
-# Authenticate your machine
-drago login
-
-# Find your domain ID
-drago zones
-
-# Create a record to manage
-drago add --zone [ID] --name [Record Name]
+# Initialize the client (have a Cloudflare API token ready)
+drago init
 
 # Start the daemon
 drago start</code
