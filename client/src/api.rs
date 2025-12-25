@@ -780,12 +780,59 @@ fn prompt_and_store_token(access_token: &str) -> Result<(), Box<dyn std::error::
         return Err("Token name cannot be empty".into());
     }
 
-    // Prompt for Cloudflare access token
-    let cloudflare_token = rpassword::prompt_password("Enter your Cloudflare API token: ")?;
+    // Prompt for Cloudflare access token with retry loop
+    loop {
+        let cloudflare_token = rpassword::prompt_password("Enter your Cloudflare API token: ")?;
 
-    // Send Cloudflare token to API
-    store_cloudflare_token(access_token, &token_name, &cloudflare_token)?;
-    println!("✅ Cloudflare token '{}' stored securely", token_name);
+        // Verify the token before storing
+        match verify_cloudflare_token(&cloudflare_token) {
+            Ok(()) => {
+                // Send Cloudflare token to API
+                store_cloudflare_token(access_token, &token_name, &cloudflare_token)?;
+                println!("✅ Cloudflare token '{}' stored securely", token_name);
+                return Ok(());
+            }
+            Err(_) => {
+                println!("❌ Invalid DNS access token");
+            }
+        }
+    }
+}
 
-    Ok(())
+/// Verify Cloudflare access by attempting to list zones
+pub fn verify_cloudflare_token(cf_token: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+
+    // Defensive trim to remove newlines or accidental quotes from config files
+    let clean_token = cf_token.trim().trim_matches('"').trim_matches('\'');
+
+    // Attempt to list zones, limited to 1 for speed
+    let res = client
+        .get("https://api.cloudflare.com/client/v4/zones")
+        .query(&[("per_page", "1")])
+        .bearer_auth(clean_token)
+        .timeout(Duration::from_secs(10))
+        .send()?;
+
+    if res.status().is_success() {
+        #[derive(Deserialize)]
+        struct CloudflareResponse {
+            success: bool,
+        }
+
+        let response: CloudflareResponse = res.json()?;
+
+        if response.success {
+            // Even if the list is empty, success: true means the token is valid
+            Ok(())
+        } else {
+            Err("Cloudflare reported success as false".into())
+        }
+    } else {
+        let status = res.status();
+        let error_text = res.text().unwrap_or_else(|_| "Unknown error".to_string());
+
+        // If you still get 6003/6111 here, the token string itself is malformed
+        Err(format!("Cloudflare API error ({}): {}", status, error_text).into())
+    }
 }
